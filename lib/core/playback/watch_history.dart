@@ -3,9 +3,12 @@ import 'package:watch_app/core/hive/safe_box.dart';
 import 'package:watch_app/core/hive/hive_key.dart';
 
 import 'package:hive/hive.dart';
+import 'package:supabase_flutter/supabase_flutter.dart'
+    show PostgrestClient, PostgrestQueryBuilder;
 
 import '../privacy/incognito_mode.dart';
 import '../profiles/profile_scope.dart';
+import '../supabase/cloud_postgrest.dart';
 import '../supabase/supabase_service.dart';
 
 class HistoryEntry {
@@ -55,13 +58,24 @@ class HistoryEntry {
       : (position.inMilliseconds / duration.inMilliseconds).clamp(0.0, 1.0);
 }
 
-/// Thin transport seam over the `history` Supabase table, injectable so
+/// Thin transport seam over the cloud `history` table, injectable so
 /// [WatchHistory]'s throttle/flush logic is unit-testable without a live
-/// Supabase project.
+/// backend. When no VPS client is supplied, it uses Supabase for rollback builds.
 class HistoryRemote {
-  HistoryRemote(this._service);
+  HistoryRemote(
+    SupabaseService service, {
+    PostgrestClient? vpsClient,
+    String? Function()? accessToken,
+  }) : _cloud = CloudPostgrest(
+         service,
+         vpsClient: vpsClient,
+         accessToken: accessToken,
+       );
 
-  final SupabaseService _service;
+  final CloudPostgrest _cloud;
+
+  PostgrestQueryBuilder _from(String table) => _cloud.from(table);
+
   static const int pageSize = 200;
   static const int _seedPageSize = 1000;
   static const String _historyColumns =
@@ -73,7 +87,7 @@ class HistoryRemote {
     final conflict = profileId == null
         ? 'user_key,source_id,show_id'
         : 'user_key,profile_id,source_id,show_id';
-    await _service.client.from(table).upsert(row, onConflict: conflict);
+    await _from(table).upsert(row, onConflict: conflict);
   }
 
   Future<Map<String, dynamic>?> getFor(
@@ -83,8 +97,7 @@ class HistoryRemote {
     required String showId,
   }) async {
     final table = profileId == null ? 'history' : 'profile_history';
-    var query = _service.client
-        .from(table)
+    var query = _from(table)
         .select(_historyColumns)
         .eq('user_key', userKey)
         .eq('source_id', sourceId)
@@ -101,7 +114,7 @@ class HistoryRemote {
     String? profileId,
   }) async {
     final table = profileId == null ? 'history' : 'profile_history';
-    await _service.client.from(table).delete().match({
+    await _from(table).delete().match({
       'user_key': userKey,
       'source_id': sourceId,
       'show_id': showId,
@@ -113,7 +126,7 @@ class HistoryRemote {
   /// can't sync back on the next pull.
   Future<void> deleteAllFor(String userKey, {String? profileId}) async {
     final table = profileId == null ? 'history' : 'profile_history';
-    var query = _service.client.from(table).delete().eq('user_key', userKey);
+    var query = _from(table).delete().eq('user_key', userKey);
     if (profileId != null) query = query.eq('profile_id', profileId);
     await query;
   }
@@ -126,10 +139,9 @@ class HistoryRemote {
     final rows = <Map<String, dynamic>>[];
     var offset = 0;
     while (true) {
-      var query = _service.client
-          .from(table)
-          .select('source_id,show_id,updated_at')
-          .eq('user_key', userKey);
+      var query = _from(
+        table,
+      ).select('source_id,show_id,updated_at').eq('user_key', userKey);
       if (profileId != null) query = query.eq('profile_id', profileId);
       final page =
           (await query
@@ -154,10 +166,7 @@ class HistoryRemote {
     required int offset,
   }) async {
     final table = profileId == null ? 'history' : 'profile_history';
-    var query = _service.client
-        .from(table)
-        .select(_historyColumns)
-        .eq('user_key', userKey);
+    var query = _from(table).select(_historyColumns).eq('user_key', userKey);
     if (profileId != null) query = query.eq('profile_id', profileId);
     final page =
         (await query
@@ -180,12 +189,17 @@ class WatchHistory {
     this._currentUserId, {
     HistoryRemote? remote,
     String? Function()? currentProfileId,
+    String backendNamespace = '',
   }) : _remote = remote ?? HistoryRemote(service),
-       _currentProfileId = currentProfileId;
+       _currentProfileId = currentProfileId,
+       _backendNamespace = backendNamespace;
 
   final HistoryRemote _remote;
   final String? Function() _currentUserId;
   final String? Function()? _currentProfileId;
+  final String _backendNamespace;
+  String _metadataKey(String key) =>
+      _backendNamespace.isEmpty ? key : '${key}_$_backendNamespace';
   String get _profileId => _currentProfileId?.call() ?? kDefaultProfileId;
   String? _remoteProfileId(String id) => id == kDefaultProfileId ? null : id;
 
@@ -220,7 +234,9 @@ class WatchHistory {
       await meta.delete(_syncMetaKey);
       for (final key in meta.keys.toList()) {
         final value = '$key';
-        if (value.contains(_cloudPagePrefix) || value.contains(_pendingKey)) {
+        if (value.contains(_cloudPagePrefix) ||
+            value.contains(_pendingKey) ||
+            value.contains(_syncMetaKey)) {
           await meta.delete(key);
         }
       }
@@ -231,8 +247,10 @@ class WatchHistory {
   String _key(String sourceId, String showId, [String? profileId]) =>
       profileScopedKey(profileId ?? _profileId, hiveKey('$sourceId::$showId'));
 
-  String _cloudPageKey(String userId, String profileId) =>
-      profileScopedKey(profileId, '$_cloudPagePrefix${hiveKey(userId)}');
+  String _cloudPageKey(String userId, String profileId) => profileScopedKey(
+    profileId,
+    '$_cloudPagePrefix${_backendNamespace.isEmpty ? '' : 'vps:'}${hiveKey(userId)}',
+  );
 
   String _pendingMetaKey([String? profileId]) =>
       profileScopedKey(profileId ?? _profileId, _pendingKey);
@@ -511,7 +529,10 @@ class WatchHistory {
     if (uid == null || !Hive.isBoxOpen(syncMetaBox)) return;
     final box = Hive.box(syncMetaBox);
     final profileId = _profileId;
-    final flag = profileScopedKey(profileId, '$_seedFlagPrefix$uid');
+    final flag = profileScopedKey(
+      profileId,
+      _metadataKey('$_seedFlagPrefix$uid'),
+    );
     if (box.get(flag) == true) return;
     final r = await pushAllLocalToCloud();
     if (r.failed == 0) await box.put(flag, true);
@@ -643,7 +664,9 @@ class WatchHistory {
     int? last;
     if (Hive.isBoxOpen(syncMetaBox)) {
       last =
-          Hive.box(syncMetaBox).get(profileScopedKey(profileId, _syncMetaKey))
+          Hive.box(
+                syncMetaBox,
+              ).get(profileScopedKey(profileId, _metadataKey(_syncMetaKey)))
               as int?;
     }
     if (last != null) {
@@ -656,7 +679,7 @@ class WatchHistory {
   void _markPulled(String profileId) {
     if (Hive.isBoxOpen(syncMetaBox)) {
       Hive.box(syncMetaBox).put(
-        profileScopedKey(profileId, _syncMetaKey),
+        profileScopedKey(profileId, _metadataKey(_syncMetaKey)),
         DateTime.now().millisecondsSinceEpoch,
       );
     }
@@ -700,7 +723,9 @@ class WatchHistory {
     }
     if (Hive.isBoxOpen(syncMetaBox)) {
       final meta = Hive.box(syncMetaBox);
-      await meta.delete(profileScopedKey(profileId, _syncMetaKey));
+      await meta.delete(
+        profileScopedKey(profileId, _metadataKey(_syncMetaKey)),
+      );
       await meta.delete(_pendingMetaKey(profileId));
       if (uid != null) {
         await meta.delete(_cloudPageKey(uid, profileId));

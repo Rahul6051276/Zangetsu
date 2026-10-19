@@ -1,0 +1,20 @@
+[Unit]
+Description=Zangetsu staging sync API
+After=postgresql.service
+Requires=postgresql.service
+
+[Service]
+Type=simple
+User=sync_authenticator
+Group=sync_authenticator
+ExecStart=/usr/local/bin/postgrest /etc/zangetsu-sync/postgrest.conf
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

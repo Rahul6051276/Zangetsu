@@ -117,6 +117,9 @@ android {
                 signingConfigs.getByName("debugWithReleaseKey")
             else
                 signingConfigs.getByName("debug")
+            if (providers.gradleProperty("vpsSyncTestBuild").orNull == "true") {
+                applicationIdSuffix = ".vpstest"
+            }
         }
         // Profile is AOT like release but keeps the VM service, so it can
         // reproduce a release-only stall AND be inspected. Same release key so

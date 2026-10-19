@@ -298,6 +298,25 @@ void main() {
   );
 
   test(
+    'a differently-namespaced backend pulls with its own throttle',
+    () async {
+      await store.add(_item(id: 'cached'));
+      await store.pullFromCloud();
+      final supabasePulls = fake.listForCalls;
+
+      final vps = MyListStore(
+        SupabaseService(),
+        () => 'user1',
+        remote: fake,
+        backendNamespace: 'vps',
+      );
+      await vps.pullFromCloud();
+
+      expect(fake.listForCalls, greaterThan(supabasePulls));
+    },
+  );
+
+  test(
     'a second pull does not download the unchanged full list again',
     () async {
       await store.add(_item(id: 'cached'));

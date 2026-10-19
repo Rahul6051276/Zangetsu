@@ -177,6 +177,49 @@ void main() {
     },
   );
 
+  test('first VPS pull ignores the old Supabase freshness timestamp', () async {
+    await Hive.box(
+      WatchHistory.syncMetaBox,
+    ).put('history_lastPullMs', DateTime.now().millisecondsSinceEpoch);
+    fake.rows.add({
+      'user_key': 'user1',
+      'profile_id': null,
+      'source_id': 'src',
+      'show_id': 'new-on-vps',
+      'show_title': 'New on VPS',
+      'updated_at': DateTime.now().millisecondsSinceEpoch,
+    });
+    final vpsHistory = WatchHistory(
+      SupabaseService(),
+      () => 'user1',
+      remote: fake,
+      backendNamespace: 'vps',
+    );
+
+    await vpsHistory.pullFromCloudIfStale();
+
+    expect(
+      vpsHistory.recent().map((entry) => entry.showId),
+      contains('new-on-vps'),
+    );
+  });
+
+  test('first VPS seed ignores the old Supabase seeded flag', () async {
+    await Hive.box(WatchHistory.syncMetaBox).put('history_seeded_user1', true);
+    await history.save(_entry(showId: 'local-only'));
+    fake.rows.clear();
+    final vpsHistory = WatchHistory(
+      SupabaseService(),
+      () => 'user1',
+      remote: fake,
+      backendNamespace: 'vps',
+    );
+
+    await vpsHistory.seedCloudIfNeeded();
+
+    expect(fake.rows.map((row) => row['show_id']), contains('local-only'));
+  });
+
   test('watch progress is isolated by profile', () async {
     var activeProfileId = 'default';
     final scoped = WatchHistory(

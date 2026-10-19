@@ -151,6 +151,121 @@ void main() {
   });
 
   test(
+    'a cloud-deleted profile is not restored from the local cache',
+    () async {
+      final remote = _MemoryProfileRemote();
+      final first = ViewerProfileStore(
+        remote: remote,
+        currentUserId: () => 'test-user',
+      );
+      await first.loadForUser();
+      final guest = (await first.create('Guest'))!;
+      remote.rows.remove(guest.id); // Deleted on another device.
+
+      final reloaded = ViewerProfileStore(
+        remote: remote,
+        currentUserId: () => 'test-user',
+      );
+      await reloaded.loadForUser();
+
+      expect(reloaded.profiles.any((p) => p.id == guest.id), isFalse);
+      expect(remote.rows.containsKey(guest.id), isFalse);
+    },
+  );
+
+  test(
+    'does not revive a cloud-deleted profile after an offline edit',
+    () async {
+      final remote = _MemoryProfileRemote();
+      final first = ViewerProfileStore(
+        remote: remote,
+        currentUserId: () => 'test-user',
+      );
+      await first.loadForUser();
+      final guest = (await first.create('Guest'))!;
+
+      remote.offline = true;
+      expect(await first.rename(guest.id, 'Edited offline'), isFalse);
+      remote.offline = false;
+      remote.rows.remove(guest.id); // Deleted from another device.
+      final listBox = await Hive.openBox('my_list');
+      await listBox.put('p:${guest.id}::saved-title', {'title': 'Guest title'});
+
+      final reloaded = ViewerProfileStore(
+        remote: remote,
+        currentUserId: () => 'test-user',
+      );
+      await reloaded.loadForUser();
+
+      expect(
+        reloaded.profiles.any((profile) => profile.id == guest.id),
+        isFalse,
+      );
+      expect(remote.rows.containsKey(guest.id), isFalse);
+      expect(listBox.containsKey('p:${guest.id}::saved-title'), isFalse);
+    },
+  );
+
+  test(
+    'retries an offline edit while the cloud profile still exists',
+    () async {
+      final remote = _MemoryProfileRemote();
+      final first = ViewerProfileStore(
+        remote: remote,
+        currentUserId: () => 'test-user',
+      );
+      await first.loadForUser();
+      final guest = (await first.create('Guest'))!;
+
+      remote.offline = true;
+      expect(await first.rename(guest.id, 'Edited offline'), isFalse);
+      remote.offline = false;
+
+      final reloaded = ViewerProfileStore(
+        remote: remote,
+        currentUserId: () => 'test-user',
+      );
+      await reloaded.loadForUser();
+
+      expect(
+        reloaded.profiles.firstWhere((p) => p.id == guest.id).name,
+        'Edited offline',
+      );
+      expect(remote.rows[guest.id]?.name, 'Edited offline');
+    },
+  );
+
+  test(
+    'an offline profile edit is retried without reviving other rows',
+    () async {
+      final remote = _MemoryProfileRemote();
+      final first = ViewerProfileStore(
+        remote: remote,
+        currentUserId: () => 'test-user',
+      );
+      await first.loadForUser();
+      remote.offline = true;
+      final guest = (await first.create('Offline Guest'))!;
+      expect(await first.rename(guest.id, 'Edited before first sync'), isFalse);
+      expect(remote.rows.containsKey(guest.id), isFalse);
+      remote.offline = false;
+
+      final reloaded = ViewerProfileStore(
+        remote: remote,
+        currentUserId: () => 'test-user',
+      );
+      await reloaded.loadForUser();
+
+      expect(reloaded.profiles.any((p) => p.id == guest.id), isTrue);
+      expect(
+        reloaded.profiles.firstWhere((p) => p.id == guest.id).name,
+        'Edited before first sync',
+      );
+      expect(remote.rows[guest.id]?.name, 'Edited before first sync');
+    },
+  );
+
+  test(
     'deletes a profile avatar only after cloud profile deletion succeeds',
     () async {
       const photoUrl = 'https://cdn.example/avatars/user/photo.jpg';
@@ -326,6 +441,28 @@ class _BlockingDeleteProfileRemote implements ViewerProfileRemote {
 
   @override
   Future<void> upsert(String userId, ViewerProfile profile) async {}
+}
+
+class _MemoryProfileRemote implements ViewerProfileRemote {
+  final Map<String, ViewerProfile> rows = {};
+  bool offline = false;
+
+  @override
+  Future<List<Map<String, dynamic>>> listFor(String userId) async => [
+    for (final p in rows.values) {'profile_id': p.id, ...p.toJson()},
+  ];
+
+  @override
+  Future<void> upsert(String userId, ViewerProfile profile) async {
+    if (offline) throw const SocketException('offline');
+    rows[profile.id] = profile;
+  }
+
+  @override
+  Future<void> delete(String userId, String profileId) async {
+    if (offline) throw const SocketException('offline');
+    rows.remove(profileId);
+  }
 }
 
 class _FailingUpsertProfileRemote implements ViewerProfileRemote {

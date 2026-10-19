@@ -2,10 +2,12 @@ import 'package:flutter/foundation.dart';
 import 'package:watch_app/core/hive/safe_box.dart';
 import 'package:watch_app/core/hive/hive_key.dart';
 import 'package:hive_flutter/hive_flutter.dart';
+import 'package:supabase_flutter/supabase_flutter.dart' show PostgrestClient;
 
 import '../models/provider_info.dart';
 import '../privacy/incognito_mode.dart';
 import '../profiles/profile_scope.dart';
+import '../supabase/cloud_postgrest.dart';
 import '../supabase/supabase_service.dart';
 import '../zmode/zmode_ids.dart';
 
@@ -149,9 +151,17 @@ class ReadEntry {
 /// so [ReadHistory]'s throttle/flush logic is unit-testable without a live
 /// Supabase project. Mirrors [HistoryRemote] in watch_history.dart.
 class ReadingHistoryRemote {
-  ReadingHistoryRemote(this._service);
+  ReadingHistoryRemote(
+    SupabaseService service, {
+    PostgrestClient? vpsClient,
+    String? Function()? accessToken,
+  }) : _cloud = CloudPostgrest(
+         service,
+         vpsClient: vpsClient,
+         accessToken: accessToken,
+       );
 
-  final SupabaseService _service;
+  final CloudPostgrest _cloud;
   static const int pageSize = 200;
   static const int _seedPageSize = 1000;
   static const String _readingColumns =
@@ -165,7 +175,7 @@ class ReadingHistoryRemote {
     final conflict = profileId == null
         ? 'user_key,source_id,show_id'
         : 'user_key,profile_id,source_id,show_id';
-    await _service.client.from(table).upsert(row, onConflict: conflict);
+    await _cloud.from(table).upsert(row, onConflict: conflict);
   }
 
   Future<List<Map<String, dynamic>>> listFor(
@@ -178,7 +188,7 @@ class ReadingHistoryRemote {
     final rows = <Map<String, dynamic>>[];
     var offset = 0;
     while (true) {
-      var query = _service.client
+      var query = _cloud
           .from(table)
           .select('source_id,show_id,updated_ms')
           .eq('user_key', userKey);
@@ -209,7 +219,7 @@ class ReadingHistoryRemote {
     final table = profileId == null
         ? 'reading_history'
         : 'profile_reading_history';
-    var query = _service.client
+    var query = _cloud
         .from(table)
         .select(_readingColumns)
         .eq('user_key', userKey);
@@ -237,7 +247,7 @@ class ReadingHistoryRemote {
     final table = profileId == null
         ? 'reading_history'
         : 'profile_reading_history';
-    var query = _service.client
+    var query = _cloud
         .from(table)
         .select(_readingColumns)
         .eq('user_key', userKey)
@@ -257,7 +267,7 @@ class ReadingHistoryRemote {
     final table = profileId == null
         ? 'reading_history'
         : 'profile_reading_history';
-    await _service.client.from(table).delete().match({
+    await _cloud.from(table).delete().match({
       'user_key': userKey,
       'source_id': sourceId,
       'show_id': showId,
@@ -276,7 +286,7 @@ class ReadingHistoryRemote {
     final table = profileId == null
         ? 'reading_history'
         : 'profile_reading_history';
-    var query = _service.client
+    var query = _cloud
         .from(table)
         .delete()
         .eq('user_key', userKey)
@@ -295,12 +305,17 @@ class ReadHistory {
     this._currentUserId, {
     ReadingHistoryRemote? remote,
     String? Function()? currentProfileId,
+    String backendNamespace = '',
   }) : _remote = remote ?? ReadingHistoryRemote(service),
-       _currentProfileId = currentProfileId;
+       _currentProfileId = currentProfileId,
+       _backendNamespace = backendNamespace;
 
   final ReadingHistoryRemote _remote;
   final String? Function() _currentUserId;
   final String? Function()? _currentProfileId;
+  final String _backendNamespace;
+  String _metadataKey(String key) =>
+      _backendNamespace.isEmpty ? key : '${key}_$_backendNamespace';
   String get _profileId => _currentProfileId?.call() ?? kDefaultProfileId;
   String? _remoteProfileId(String id) => id == kDefaultProfileId ? null : id;
 
@@ -329,10 +344,11 @@ class ReadHistory {
     // very pull that puts the reading history back. Drop it.
     if (quarantinedBoxes.contains(boxName) && Hive.isBoxOpen(syncMetaBox)) {
       final meta = Hive.box(syncMetaBox);
-      await meta.delete(_syncMetaKey);
       for (final key in meta.keys.toList()) {
         final value = '$key';
-        if (value.contains(_cloudPagePrefix) || value.contains(_pendingKey)) {
+        if (value.contains(_syncMetaKey) ||
+            value.contains(_cloudPagePrefix) ||
+            value.contains(_pendingKey)) {
           await meta.delete(key);
         }
       }
@@ -374,7 +390,7 @@ class ReadHistory {
   String _cloudPageKey(String userId, String profileId, ProviderType type) =>
       profileScopedKey(
         profileId,
-        '$_cloudPagePrefix${hiveKey(userId)}:${type.name}',
+        _metadataKey('$_cloudPagePrefix${hiveKey(userId)}:${type.name}'),
       );
 
   Map _cloudPageState(String userId, String profileId, ProviderType type) {
@@ -585,7 +601,10 @@ class ReadHistory {
     if (uid == null || !Hive.isBoxOpen(syncMetaBox)) return;
     final box = Hive.box(syncMetaBox);
     final profileId = _profileId;
-    final flag = profileScopedKey(profileId, '$_seedFlagPrefix$uid');
+    final flag = profileScopedKey(
+      profileId,
+      _metadataKey('$_seedFlagPrefix$uid'),
+    );
     if (box.get(flag) == true) return;
     final r = await pushAllLocalToCloud();
     if (r.failed == 0) await box.put(flag, true);
@@ -704,7 +723,9 @@ class ReadHistory {
     int? last;
     if (Hive.isBoxOpen(syncMetaBox)) {
       last =
-          Hive.box(syncMetaBox).get(profileScopedKey(profileId, _syncMetaKey))
+          Hive.box(
+                syncMetaBox,
+              ).get(profileScopedKey(profileId, _metadataKey(_syncMetaKey)))
               as int?;
     }
     if (last != null) {
@@ -717,7 +738,7 @@ class ReadHistory {
   void _markPulled(String profileId) {
     if (Hive.isBoxOpen(syncMetaBox)) {
       Hive.box(syncMetaBox).put(
-        profileScopedKey(profileId, _syncMetaKey),
+        profileScopedKey(profileId, _metadataKey(_syncMetaKey)),
         DateTime.now().millisecondsSinceEpoch,
       );
     }
@@ -816,7 +837,7 @@ class ReadHistory {
           in meta.keys
               .where(
                 (k) =>
-                    '$k' == _syncMetaKey ||
+                    '$k' == _metadataKey(_syncMetaKey) ||
                     '$k'.startsWith('p:') ||
                     '$k'.contains(_cloudPagePrefix) ||
                     '$k'.contains(_pendingKey),
