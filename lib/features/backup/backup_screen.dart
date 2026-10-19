@@ -9,7 +9,6 @@ import '../../core/backup/backup_file.dart';
 import '../../core/backup/backup_payload.dart';
 import '../../core/backup/backup_service.dart';
 import '../../core/di/injector.dart';
-import '../../core/supabase/supabase_service.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_text.dart';
 import '../../core/tv/tv_list_focusable.dart';
@@ -31,18 +30,19 @@ class _BackupScreenState extends State<BackupScreen> {
   bool _busy = false;
 
   BackupService get _service => sl<BackupService>();
-  BackupCloud _cloud() => BackupCloud(sl<SupabaseService>());
+  BackupCloud get _cloud => sl<BackupCloud>();
 
   bool get _isTv => sl<AppMode>().isTv;
 
   Future<void> _backupToCloud() async {
-    if (!requireLogin(context, action: context.l10n.signInToBackUpToCloud))
+    if (!requireLogin(context, action: context.l10n.signInToBackUpToCloud)) {
       return;
+    }
     final uid = context.read<AuthCubit>().state.user?.id;
     if (uid == null) return;
     setState(() => _busy = true);
     try {
-      await _cloud().upload(uid, _service.build(_selected));
+      await _cloud.upload(uid, _service.build(_selected));
       if (!mounted) return;
       ScaffoldMessenger.of(
         context,
@@ -84,14 +84,15 @@ class _BackupScreenState extends State<BackupScreen> {
   }
 
   Future<void> _restoreFromCloud() async {
-    if (!requireLogin(context, action: context.l10n.signInToRestoreFromCloud))
+    if (!requireLogin(context, action: context.l10n.signInToRestoreFromCloud)) {
       return;
+    }
     final uid = context.read<AuthCubit>().state.user?.id;
     if (uid == null) return;
     setState(() => _busy = true);
     late final RestoreReport report;
     try {
-      final p = await _cloud().download(uid);
+      final p = await _cloud.download(uid);
       if (!mounted) return;
       if (p == null) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -387,7 +388,7 @@ class _BackupScreenState extends State<BackupScreen> {
                 Padding(
                   padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
                   child: FutureBuilder<DateTime?>(
-                    future: _cloud().lastBackupAt(uid),
+                    future: _cloud.lastBackupAt(uid),
                     builder: (_, snap) {
                       final dt = snap.data;
                       final label = dt == null

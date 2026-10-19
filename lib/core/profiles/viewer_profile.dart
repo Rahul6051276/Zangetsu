@@ -2,8 +2,10 @@ import 'dart:math';
 
 import 'package:flutter/foundation.dart';
 import 'package:hive/hive.dart';
+import 'package:supabase_flutter/supabase_flutter.dart' show PostgrestClient;
 
 import '../hive/safe_box.dart';
+import '../supabase/cloud_postgrest.dart';
 import '../supabase/supabase_service.dart';
 import 'profile_scope.dart';
 
@@ -58,12 +60,20 @@ class ViewerProfile {
 }
 
 class ViewerProfileRemote {
-  ViewerProfileRemote(this._service);
+  ViewerProfileRemote(
+    SupabaseService service, {
+    PostgrestClient? vpsClient,
+    String? Function()? accessToken,
+  }) : _cloud = CloudPostgrest(
+         service,
+         vpsClient: vpsClient,
+         accessToken: accessToken,
+       );
 
-  final SupabaseService _service;
+  final CloudPostgrest _cloud;
 
   Future<List<Map<String, dynamic>>> listFor(String userId) async {
-    final rows = await _service.client
+    final rows = await _cloud
         .from('viewer_profiles')
         .select()
         .eq('user_key', userId)
@@ -72,7 +82,7 @@ class ViewerProfileRemote {
   }
 
   Future<void> upsert(String userId, ViewerProfile profile) async {
-    await _service.client.from('viewer_profiles').upsert({
+    await _cloud.from('viewer_profiles').upsert({
       'user_key': userId,
       'profile_id': profile.id,
       'name': profile.name,
@@ -83,12 +93,14 @@ class ViewerProfileRemote {
   }
 
   Future<void> delete(String userId, String profileId) async {
-    await _service.client.from('viewer_profiles').delete().match({
+    await _cloud.from('viewer_profiles').delete().match({
       'user_key': userId,
       'profile_id': profileId,
     });
   }
 }
+
+enum _PendingProfileWrite { create, update }
 
 /// Profiles belong to the signed-in account. Library stores read [activeId]
 /// at call time so the existing player and reader APIs do not change.
@@ -117,6 +129,8 @@ class ViewerProfileStore {
   final ValueNotifier<int> contextRevision = ValueNotifier(0);
 
   List<ViewerProfile> get profiles => List.unmodifiable(_profiles);
+  List<ViewerProfile> get recoverableProfiles =>
+      List.unmodifiable(_readProfiles(_recoveryKey(_loadedOwner ?? _owner)));
   ViewerProfile get activeProfile =>
       active.value ?? const ViewerProfile(id: kDefaultProfileId, name: 'Home');
   String get activeId => activeProfile.id;
@@ -138,6 +152,55 @@ class ViewerProfileStore {
   String get _owner => _currentUserId?.call() ?? 'local';
   String _profilesKey(String owner) => 'profiles:$owner';
   String _activeKey(String owner) => 'active:$owner';
+  String _pendingKey(String owner) => 'pending:$owner';
+  String _recoveryKey(String owner) => 'recoverable:$owner';
+
+  Map<String, _PendingProfileWrite> _pending(String owner) {
+    final raw = _box.get(_pendingKey(owner));
+    if (raw is Map) {
+      final pending = <String, _PendingProfileWrite>{};
+      for (final entry in raw.entries) {
+        final id = entry.key;
+        final operation = entry.value;
+        if (id is! String || operation is! String) continue;
+        if (operation == 'create') {
+          pending[id] = _PendingProfileWrite.create;
+        } else if (operation == 'update') {
+          pending[id] = _PendingProfileWrite.update;
+        }
+      }
+      return pending;
+    }
+    // Preserve queued offline profiles from the earlier, unreleased test build.
+    if (raw is List) {
+      return {
+        for (final id in raw.whereType<String>())
+          id: _PendingProfileWrite.create,
+      };
+    }
+    return {};
+  }
+
+  Future<void> _setPending(
+    String owner,
+    String id,
+    _PendingProfileWrite? operation,
+  ) async {
+    final pending = _pending(owner);
+    if (operation == null) {
+      pending.remove(id);
+    } else {
+      // A profile created offline must remain a create even if edited again
+      // before its first successful upload.
+      if (operation == _PendingProfileWrite.create ||
+          pending[id] != _PendingProfileWrite.create) {
+        pending[id] = operation;
+      }
+    }
+    await _box.put(_pendingKey(owner), {
+      for (final entry in pending.entries) entry.key: entry.value.name,
+    });
+  }
 
   Future<void> loadForUser({String displayName = 'Home'}) async {
     final request = ++_loadRequest;
@@ -146,38 +209,62 @@ class ViewerProfileStore {
     bool isCurrentLoad() => request == _loadRequest && owner == _owner;
 
     final local = _readLocal(owner);
+    var recoverable = _readProfiles(_recoveryKey(owner));
     var next = local.isEmpty ? [_defaultProfile(displayName)] : local;
     final remote = _remote;
     if (userId != null && remote != null) {
       try {
         final rows = await remote.listFor(userId);
         if (!isCurrentLoad()) return;
-        if (rows.isEmpty) {
-          for (final profile in next) {
-            await remote.upsert(userId, profile);
-            if (!isCurrentLoad()) return;
-          }
-        } else {
-          final cloud = [
-            for (final row in rows)
-              if (_validRemoteProfile(row)) _fromRemote(row),
-          ];
-          if (!cloud.any((p) => p.id == kDefaultProfileId)) {
-            final fallback = _defaultProfile(displayName);
-            cloud.insert(0, fallback);
-            await remote.upsert(userId, fallback);
-            if (!isCurrentLoad()) return;
-          }
-          final merged = {
-            for (final p in local) p.id: p,
-            for (final p in cloud) p.id: p,
-          };
-          // Keep profiles saved by older builds when the creation limit changes.
-          next = merged.values.toList();
-          for (final p in local.where((p) => !cloud.any((c) => c.id == p.id))) {
-            await remote.upsert(userId, p);
-            if (!isCurrentLoad()) return;
-          }
+        final cloud = [
+          for (final row in rows)
+            if (_validRemoteProfile(row)) _fromRemote(row),
+        ];
+        final pending = _pending(owner);
+        final cloudIds = cloud.map((profile) => profile.id).toSet();
+        recoverable = {
+          for (final profile in recoverable)
+            if (!cloudIds.contains(profile.id)) profile.id: profile,
+          for (final profile in local)
+            if (profile.id != kDefaultProfileId &&
+                !cloudIds.contains(profile.id) &&
+                pending[profile.id] == null)
+              profile.id: profile,
+        }.values.toList();
+        final unsynced = [
+          for (final profile in local)
+            if (pending[profile.id] == _PendingProfileWrite.create ||
+                (pending[profile.id] == _PendingProfileWrite.update &&
+                    cloudIds.contains(profile.id)))
+              profile,
+        ];
+        final deletedWhileOffline = [
+          for (final profile in local)
+            if (profile.id != kDefaultProfileId &&
+                pending[profile.id] == _PendingProfileWrite.update &&
+                !cloudIds.contains(profile.id))
+              profile.id,
+        ];
+        next = {
+          for (final profile in cloud) profile.id: profile,
+          for (final profile in unsynced) profile.id: profile,
+        }.values.toList();
+        if (!next.any((p) => p.id == kDefaultProfileId)) {
+          final fallback =
+              local.where((p) => p.id == kDefaultProfileId).firstOrNull ??
+              _defaultProfile(displayName);
+          next.insert(0, fallback);
+          await remote.upsert(userId, fallback);
+          if (!isCurrentLoad()) return;
+        }
+        for (final profileId in deletedWhileOffline) {
+          await _deleteLocalProfileData(profileId);
+          await _setPending(owner, profileId, null);
+        }
+        for (final profile in unsynced) {
+          await remote.upsert(userId, profile);
+          if (!isCurrentLoad()) return;
+          await _setPending(owner, profile.id, null);
         }
       } catch (_) {
         // Keep the local profile list usable during offline startup.
@@ -187,6 +274,10 @@ class ViewerProfileStore {
     if (!next.any((p) => p.id == kDefaultProfileId)) {
       next.insert(0, _defaultProfile(displayName));
     }
+    if (!isCurrentLoad()) return;
+    await _box.put(_recoveryKey(owner), [
+      for (final profile in recoverable) profile.toJson(),
+    ]);
     if (!isCurrentLoad()) return;
     await _saveLocal(owner, next);
     if (!isCurrentLoad()) return;
@@ -217,9 +308,38 @@ class ViewerProfileStore {
     );
     _profiles = [..._profiles, profile];
     await _saveLocal(_loadedOwner ?? _owner);
-    await _saveRemote(profile);
+    await _saveRemote(profile, operation: _PendingProfileWrite.create);
     revision.value++;
     return profile;
+  }
+
+  Future<bool> restoreRecoverable(String profileId) async {
+    final owner = _loadedOwner;
+    final remote = _remote;
+    if (owner == null ||
+        owner != _owner ||
+        remote == null ||
+        _currentUserId?.call() == null ||
+        _profiles.length >= maxProfiles) {
+      return false;
+    }
+    final recoverable = _readProfiles(_recoveryKey(owner));
+    final profile = recoverable.where((p) => p.id == profileId).firstOrNull;
+    if (profile == null) return false;
+    try {
+      await remote.upsert(owner, profile);
+    } catch (_) {
+      return false;
+    }
+    if (owner != _owner) return false;
+    _profiles = [..._profiles, profile];
+    await _saveLocal(owner);
+    await _box.put(_recoveryKey(owner), [
+      for (final candidate in recoverable)
+        if (candidate.id != profileId) candidate.toJson(),
+    ]);
+    revision.value++;
+    return true;
   }
 
   Future<bool> rename(String profileId, String name) async {
@@ -305,6 +425,7 @@ class ViewerProfileStore {
     if (activeId == profileId) await switchTo(kDefaultProfileId);
     await _deleteLocalProfileData(profileId);
     await _saveLocal(_loadedOwner ?? _owner);
+    await _setPending(_loadedOwner ?? _owner, profileId, null);
     if (photoUrl != null && !photoIsShared) {
       try {
         await _deleteAvatar?.call(photoUrl);
@@ -356,8 +477,11 @@ class ViewerProfileStore {
     photoUrl: row['photo_url'] as String?,
   );
 
-  List<ViewerProfile> _readLocal(String owner) {
-    final raw = _box.get(_profilesKey(owner));
+  List<ViewerProfile> _readLocal(String owner) =>
+      _readProfiles(_profilesKey(owner));
+
+  List<ViewerProfile> _readProfiles(String key) {
+    final raw = _box.get(key);
     if (raw is! List) return const [];
     final profiles = <ViewerProfile>[];
     for (final value in raw) {
@@ -376,15 +500,19 @@ class ViewerProfileStore {
         for (final profile in profiles ?? _profiles) profile.toJson(),
       ]);
 
-  Future<bool> _saveRemote(ViewerProfile profile) async {
+  Future<bool> _saveRemote(
+    ViewerProfile profile, {
+    _PendingProfileWrite operation = _PendingProfileWrite.update,
+  }) async {
     final userId = _currentUserId?.call();
     final remote = _remote;
     if (userId == null || remote == null) return true;
     try {
       await remote.upsert(userId, profile);
+      await _setPending(userId, profile.id, null);
       return true;
     } catch (_) {
-      // The local update remains available and will be uploaded at next load.
+      await _setPending(userId, profile.id, operation);
       return false;
     }
   }

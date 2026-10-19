@@ -4,7 +4,8 @@
 class Environment {
   static const String appwriteProjectId = '6a1ed44f0029b50bccde';
   static const String appwriteProjectName = 'Zangetsu';
-  static const String appwritePublicEndpoint = 'https://sgp.cloud.appwrite.io/v1';
+  static const String appwritePublicEndpoint =
+      'https://sgp.cloud.appwrite.io/v1';
 
   // Supabase project URL + anon (public) key — safe to embed, same as the
   // Appwrite project id/endpoint above. Override with --dart-define if a
@@ -17,6 +18,12 @@ class Environment {
     'SUPABASE_ANON_KEY',
     defaultValue:
         'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVvZ3d6cmxmb2VyY2Z3Y2Z3bG12Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQzNjgzODIsImV4cCI6MjA5OTk0NDM4Mn0.qr-nHnB9vb7BodP55XJ9-6Rwp__eOGCS6txhLiuWVZw',
+  );
+
+  // Supabase issues auth tokens; all app cloud-data sync uses the VPS.
+  static const String vpsSyncUrl = String.fromEnvironment(
+    'VPS_SYNC_URL',
+    defaultValue: 'https://sync.zangetsu.online',
   );
 
   /// Where Appwrite sends the password-recovery link. Appwrite appends
@@ -64,12 +71,14 @@ class Environment {
   // AniList — implicit grant (token in URL fragment, 1-year, no secret).
   static const String anilistClientId = '43052';
   static const String anilistRedirectHost = 'anilist-auth';
-  static String get anilistRedirectUri => '$trackerRedirectScheme://$anilistRedirectHost';
+  static String get anilistRedirectUri =>
+      '$trackerRedirectScheme://$anilistRedirectHost';
 
   // MyAnimeList — OAuth2 PKCE (plain), no client secret.
   static const String malClientId = 'ac006943589381143c4c4e54eac93a89';
   static const String malRedirectHost = 'mal-auth';
-  static String get malRedirectUri => '$trackerRedirectScheme://$malRedirectHost';
+  static String get malRedirectUri =>
+      '$trackerRedirectScheme://$malRedirectHost';
 
   // Simkl wants these on EVERY request (url params + a real User-Agent), or
   // the call is invisible in their debug log and they can't help when
@@ -79,10 +88,13 @@ class Environment {
   static const String simklDataHost = 'data.simkl.in';
 
   // Simkl — OAuth2 authorization-code (needs the secret to exchange the code).
-  static const String simklClientId = '8b847b09206ccdb0b3de4cc1293d6dd7d355821f5c179c57315da8ba9030eb53';
-  static const String simklClientSecret = '34ba8e5ac7c8a5c27926dfdf78205e5b913de9928361cb5a243558239298c96d';
+  static const String simklClientId =
+      '8b847b09206ccdb0b3de4cc1293d6dd7d355821f5c179c57315da8ba9030eb53';
+  static const String simklClientSecret =
+      '34ba8e5ac7c8a5c27926dfdf78205e5b913de9928361cb5a243558239298c96d';
   static const String simklRedirectHost = 'simkl-auth';
-  static String get simklRedirectUri => '$trackerRedirectScheme://$simklRedirectHost';
+  static String get simklRedirectUri =>
+      '$trackerRedirectScheme://$simklRedirectHost';
 
   // Back-compat alias (older AniList code referenced this name).
   // ── MangaBaka ────────────────────────────────────────────────────────────

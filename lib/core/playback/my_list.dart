@@ -5,6 +5,7 @@ import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:hive/hive.dart';
+import 'package:supabase_flutter/supabase_flutter.dart' show PostgrestClient;
 
 import '../di/injector.dart';
 import '../tracker/tracker_item_url.dart';
@@ -12,16 +13,25 @@ import '../zmode/metadata_repository.dart';
 import '../zmode/zmode_ids.dart';
 import '../logging/app_logger.dart';
 import '../models/media_item.dart';
+import '../supabase/cloud_postgrest.dart';
 import '../supabase/supabase_service.dart';
 import '../profiles/profile_scope.dart';
 
-/// Thin transport seam over the `mylist` Supabase table, injectable so
+/// Thin transport seam over the `mylist` cloud table, injectable so
 /// [MyListStore]'s pending-queue/pull-merge logic is unit-testable without a
-/// live Supabase project.
+/// live backend.
 class MyListRemote {
-  MyListRemote(this._service);
+  MyListRemote(
+    SupabaseService service, {
+    PostgrestClient? vpsClient,
+    String? Function()? accessToken,
+  }) : _cloud = CloudPostgrest(
+         service,
+         vpsClient: vpsClient,
+         accessToken: accessToken,
+       );
 
-  final SupabaseService _service;
+  final CloudPostgrest _cloud;
   static const int _pageSize = 500;
   static const String _listColumns =
       'sync_id,sync_version,source_id,item_id,title,cover,cover_headers,url,type,status,added_at';
@@ -29,7 +39,7 @@ class MyListRemote {
   Future<void> upsert(Map<String, dynamic> row) async {
     final profileId = row['profile_id'] as String?;
     final table = profileId == null ? 'mylist' : 'profile_mylist';
-    await _service.client.from(table).upsert(row);
+    await _cloud.from(table).upsert(row);
   }
 
   Future<void> deleteRow(
@@ -45,7 +55,7 @@ class MyListRemote {
       'item_id': itemId,
     };
     if (profileId != null) filters['profile_id'] = profileId;
-    await _service.client.from(table).delete().match(filters);
+    await _cloud.from(table).delete().match(filters);
   }
 
   Future<List<Map<String, dynamic>>> listFor(
@@ -53,10 +63,7 @@ class MyListRemote {
     String? profileId,
   }) async {
     final table = profileId == null ? 'mylist' : 'profile_mylist';
-    var query = _service.client
-        .from(table)
-        .select('sync_id')
-        .eq('user_key', userKey);
+    var query = _cloud.from(table).select('sync_id').eq('user_key', userKey);
     if (profileId != null) query = query.eq('profile_id', profileId);
     final head = await query.order('sync_id', ascending: false).limit(1);
     final throughSyncId = (head as List).isEmpty
@@ -70,7 +77,7 @@ class MyListRemote {
   }
 
   Future<int> currentVersion(String userKey, {String? profileId}) async {
-    final row = await _service.client
+    final row = await _cloud
         .from('mylist_sync_clock')
         .select('version')
         .eq('user_key', userKey)
@@ -134,7 +141,7 @@ class MyListRemote {
     final rows = <Map<String, dynamic>>[];
     var afterSyncId = 0;
     while (true) {
-      var query = _service.client
+      var query = _cloud
           .from(table)
           .select(_listColumns)
           .eq('user_key', userKey);
@@ -165,7 +172,7 @@ class MyListRemote {
     final rows = <Map<String, dynamic>>[];
     var after = afterVersion;
     while (true) {
-      var query = _service.client
+      var query = _cloud
           .from(table)
           .select(_listColumns)
           .eq('user_key', userKey);
@@ -196,7 +203,7 @@ class MyListRemote {
     var after = afterVersion;
     while (true) {
       final page =
-          (await _service.client
+          (await _cloud
                       .from('mylist_sync_tombstones')
                       .select('source_id,item_id,sync_version')
                       .eq('user_key', userKey)
@@ -216,9 +223,9 @@ class MyListRemote {
   }
 }
 
-/// My List, backed by Hive for instant local reads and synced to Supabase when
+/// My List, backed by Hive for instant local reads and synced to the cloud when
 /// the user is signed in. The local box is the read source (so the UI stays
-/// synchronous + offline-friendly); writes go through to Supabase best-effort.
+/// synchronous + offline-friendly); writes go through to the cloud best-effort.
 class MyListStore {
   MyListStore(
     SupabaseService service,
@@ -227,12 +234,17 @@ class MyListStore {
     String? Function(MediaItem)? statusOf,
     void Function(String key, String? statusName)? onStatusPulled,
     String? Function()? currentProfileId,
+    String backendNamespace = '',
   }) : _remote = remote ?? MyListRemote(service),
        _statusOf = statusOf,
        _onStatusPulled = onStatusPulled,
-       _currentProfileId = currentProfileId;
+       _currentProfileId = currentProfileId,
+       _backendNamespace = backendNamespace;
 
   final MyListRemote _remote;
+  final String _backendNamespace;
+  String _metadataKey(String key) =>
+      _backendNamespace.isEmpty ? key : '${key}_$_backendNamespace';
 
   /// Returns the signed-in user id, or null when logged out. Injected so the
   /// store doesn't depend on the auth feature directly.
@@ -370,7 +382,10 @@ class MyListStore {
     if (uid == null || !Hive.isBoxOpen(syncMetaBox)) return;
     final box = Hive.box(syncMetaBox);
     final profileId = _profileId;
-    final flag = profileScopedKey(profileId, '$_seedFlagPrefix$uid');
+    final flag = profileScopedKey(
+      profileId,
+      _metadataKey('$_seedFlagPrefix$uid'),
+    );
     if (box.get(flag) == true) return;
     final r = await pushAllLocalToCloud();
     if (r.failed == 0) await box.put(flag, true);
@@ -537,7 +552,7 @@ class MyListStore {
       profileScopedKey(profileId ?? _profileId, key);
 
   String _userSyncMetaKey(String key, String userId, String profileId) =>
-      profileScopedKey(profileId, '$key:${hiveKey(userId)}');
+      profileScopedKey(profileId, '${_metadataKey(key)}:${hiveKey(userId)}');
 
   String _cursorKey(String userId, String profileId) =>
       _userSyncMetaKey(_syncCursorPrefix, userId, profileId);
@@ -877,9 +892,9 @@ class MyListStore {
 
   bool _seededFor(String uid, String profileId) {
     if (!Hive.isBoxOpen(syncMetaBox)) return false;
-    return Hive.box(
-          syncMetaBox,
-        ).get(profileScopedKey(profileId, '$_seedFlagPrefix$uid')) ==
+    return Hive.box(syncMetaBox).get(
+          profileScopedKey(profileId, _metadataKey('$_seedFlagPrefix$uid')),
+        ) ==
         true;
   }
 

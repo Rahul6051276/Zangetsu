@@ -9,8 +9,10 @@ import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:flutter/services.dart' show MethodChannel, rootBundle;
 import 'package:get_it/get_it.dart';
 import 'package:hive_flutter/hive_flutter.dart';
+import 'package:supabase_flutter/supabase_flutter.dart' show PostgrestClient;
 
 import '../announce/announcement.dart';
+import '../backup/backup_cloud.dart';
 import '../logging/log_report_service.dart';
 import '../announce/announcement_service.dart';
 import '../cache/app_image_cache.dart';
@@ -244,10 +246,32 @@ Future<void> initDependencies() async {
   // Resolved lazily at call time; null when signed out so the stores stay
   // local-only.
   String? currentUserId() => sl<SupabaseService>().currentUserId();
+
+  // Supabase issues auth tokens; cloud data requests use the VPS client.
+  final endpoint = Uri.tryParse(Environment.vpsSyncUrl);
+  if (endpoint == null ||
+      endpoint.scheme != 'https' ||
+      endpoint.host.isEmpty ||
+      endpoint.userInfo.isNotEmpty ||
+      endpoint.hasQuery ||
+      endpoint.hasFragment) {
+    throw StateError('VPS_SYNC_URL must be a valid HTTPS sync endpoint');
+  }
+  final vpsClient = PostgrestClient(
+    endpoint.toString().replaceFirst(RegExp(r'/$'), ''),
+  );
+  String? cloudAccessToken() =>
+      sl<SupabaseService>().client.auth.currentSession?.accessToken;
+  const backendNamespace = 'vps';
+
   await ViewerProfileStore.init();
   sl.registerSingleton<ViewerProfileStore>(
     ViewerProfileStore(
-      remote: ViewerProfileRemote(sl<SupabaseService>()),
+      remote: ViewerProfileRemote(
+        sl<SupabaseService>(),
+        vpsClient: vpsClient,
+        accessToken: cloudAccessToken,
+      ),
       currentUserId: currentUserId,
       deleteAvatar: (url) async {
         final token =
@@ -310,7 +334,13 @@ Future<void> initDependencies() async {
     WatchHistory(
       sl<SupabaseService>(),
       currentUserId,
+      remote: HistoryRemote(
+        sl<SupabaseService>(),
+        vpsClient: vpsClient,
+        accessToken: cloudAccessToken,
+      ),
       currentProfileId: currentProfileId,
+      backendNamespace: backendNamespace,
     ),
   );
   await ReadHistory.init();
@@ -318,7 +348,13 @@ Future<void> initDependencies() async {
     ReadHistory(
       sl<SupabaseService>(),
       currentUserId,
+      remote: ReadingHistoryRemote(
+        sl<SupabaseService>(),
+        vpsClient: vpsClient,
+        accessToken: cloudAccessToken,
+      ),
       currentProfileId: currentProfileId,
+      backendNamespace: backendNamespace,
     ),
   );
   sl.registerSingleton<WatchRoomService>(
@@ -340,9 +376,14 @@ Future<void> initDependencies() async {
   await CategoryStore.init();
   sl.registerSingleton<CategoryStore>(
     CategoryStore(
-      remote: CategoryRemote(sl<SupabaseService>()),
+      remote: CategoryRemote(
+        sl<SupabaseService>(),
+        vpsClient: vpsClient,
+        accessToken: cloudAccessToken,
+      ),
       currentUserId: currentUserId,
       currentProfileId: currentProfileId,
+      backendNamespace: backendNamespace,
     ),
   );
   await MyListStore.init();
@@ -350,10 +391,26 @@ Future<void> initDependencies() async {
     MyListStore(
       sl<SupabaseService>(),
       currentUserId,
+      remote: MyListRemote(
+        sl<SupabaseService>(),
+        vpsClient: vpsClient,
+        accessToken: cloudAccessToken,
+      ),
       currentProfileId: currentProfileId,
+      backendNamespace: backendNamespace,
       statusOf: (m) => sl<ListStatusStore>().statusOf(m)?.name,
       onStatusPulled: (key, name) =>
           sl<ListStatusStore>().setStatusRaw(key, name),
+    ),
+  );
+  sl.registerSingleton<BackupCloud>(
+    BackupCloud(
+      sl<SupabaseService>(),
+      remote: BackupRemote(
+        sl<SupabaseService>(),
+        vpsClient: vpsClient,
+        accessToken: cloudAccessToken,
+      ),
     ),
   );
   await TitlePrefsStore.init();

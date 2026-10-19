@@ -2,11 +2,13 @@ import 'dart:math';
 
 import 'package:flutter/foundation.dart';
 import 'package:hive/hive.dart';
+import 'package:supabase_flutter/supabase_flutter.dart' show PostgrestClient;
 import 'package:watch_app/core/hive/safe_box.dart';
 import 'package:watch_app/core/hive/hive_key.dart';
 
 import '../models/media_item.dart';
 import '../profiles/profile_scope.dart';
+import '../supabase/cloud_postgrest.dart';
 import '../supabase/supabase_service.dart';
 
 /// One user-made category ("Persona", "Gym"). [id] is stable and never shown —
@@ -70,11 +72,20 @@ String _uuidV4() {
   return '${hex(0, 4)}-${hex(4, 6)}-${hex(6, 8)}-${hex(8, 10)}-${hex(10, 16)}';
 }
 
-/// Reads and writes the two Supabase tables that back categories. Thin on
+/// Reads and writes the two cloud tables that back categories. Thin on
 /// purpose — the store owns the logic, this owns the wire.
 class CategoryRemote {
-  CategoryRemote(this._service);
-  final SupabaseService _service;
+  CategoryRemote(
+    SupabaseService service, {
+    PostgrestClient? vpsClient,
+    String? Function()? accessToken,
+  }) : _cloud = CloudPostgrest(
+         service,
+         vpsClient: vpsClient,
+         accessToken: accessToken,
+       );
+
+  final CloudPostgrest _cloud;
 
   Future<List<Map<String, dynamic>>> categoriesFor(
     String uid, {
@@ -83,7 +94,7 @@ class CategoryRemote {
     final table = profileId == null
         ? 'list_categories'
         : 'profile_list_categories';
-    var query = _service.client.from(table).select().eq('user_key', uid);
+    var query = _cloud.from(table).select().eq('user_key', uid);
     if (profileId != null) query = query.eq('profile_id', profileId);
     final res = await query;
     return (res as List).cast<Map<String, dynamic>>();
@@ -96,13 +107,13 @@ class CategoryRemote {
     final table = profileId == null
         ? 'mylist_categories'
         : 'profile_mylist_categories';
-    var query = _service.client.from(table).select().eq('user_key', uid);
+    var query = _cloud.from(table).select().eq('user_key', uid);
     if (profileId != null) query = query.eq('profile_id', profileId);
     final res = await query;
     return (res as List).cast<Map<String, dynamic>>();
   }
 
-  Future<void> upsertCategory(Map<String, dynamic> row) => _service.client
+  Future<void> upsertCategory(Map<String, dynamic> row) => _cloud
       .from(
         row['profile_id'] == null
             ? 'list_categories'
@@ -111,7 +122,7 @@ class CategoryRemote {
       .upsert(row);
 
   Future<void> deleteCategory(String uid, String id, {String? profileId}) =>
-      _service.client
+      _cloud
           .from(
             profileId == null ? 'list_categories' : 'profile_list_categories',
           )
@@ -122,7 +133,7 @@ class CategoryRemote {
             ...?profileId == null ? null : {'profile_id': profileId},
           });
 
-  Future<void> addAssignment(Map<String, dynamic> row) => _service.client
+  Future<void> addAssignment(Map<String, dynamic> row) => _cloud
       .from(
         row['profile_id'] == null
             ? 'mylist_categories'
@@ -136,7 +147,7 @@ class CategoryRemote {
     String itemId,
     String categoryId, {
     String? profileId,
-  }) => _service.client
+  }) => _cloud
       .from(
         profileId == null ? 'mylist_categories' : 'profile_mylist_categories',
       )
@@ -164,15 +175,18 @@ class CategoryStore {
     CategoryRemote? remote,
     String? Function()? currentUserId,
     String? Function()? currentProfileId,
+    String backendNamespace = '',
   }) : _remote = remote,
        _currentUserId = currentUserId,
-       _currentProfileId = currentProfileId;
+       _currentProfileId = currentProfileId,
+       _backendNamespace = backendNamespace;
 
   /// Null when the app runs without Supabase (tests) — everything still works,
   /// it just stays on the device.
   final CategoryRemote? _remote;
   final String? Function()? _currentUserId;
   final String? Function()? _currentProfileId;
+  final String _backendNamespace;
   String get _profileId => _currentProfileId?.call() ?? kDefaultProfileId;
   String? _remoteProfileId(String id) => id == kDefaultProfileId ? null : id;
 
@@ -180,8 +194,12 @@ class CategoryStore {
   static const String _catsKey = '__categories__';
   String _categoriesKey([String? profileId]) =>
       profileScopedKey(profileId ?? _profileId, _catsKey);
-  String _metaKey([String? profileId]) =>
-      profileScopedKey(profileId ?? _profileId, _syncMetaKey);
+  String _metaKey([String? profileId]) => profileScopedKey(
+    profileId ?? _profileId,
+    _backendNamespace.isEmpty
+        ? _syncMetaKey
+        : '${_syncMetaKey}_$_backendNamespace',
+  );
 
   /// Shared with [MyListStore] / [WatchHistory] — last successful cloud-pull
   /// timestamps, kept out of [boxName] so they never appear in assignment

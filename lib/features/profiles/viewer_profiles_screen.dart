@@ -68,6 +68,7 @@ class _ViewerProfilesScreenState extends State<ViewerProfilesScreen>
   final _enableSelectionHero = ValueNotifier(false);
   bool _selecting = false;
   bool _managingProfiles = false;
+  bool _recoveryPromptShown = false;
   String? _pickerArtworkUrl;
   ProfilePickerArtwork? _pickerArtwork;
   Timer? _artworkRotation;
@@ -92,6 +93,9 @@ class _ViewerProfilesScreenState extends State<ViewerProfilesScreen>
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) unawaited(_promptForRecovery());
+    });
     _pickerEntrance = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 700),
@@ -230,6 +234,39 @@ class _ViewerProfilesScreenState extends State<ViewerProfilesScreen>
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text(context.l10n.offlineBody)));
+    }
+  }
+
+  Future<void> _promptForRecovery() async {
+    if (_recoveryPromptShown || _profiles.recoverableProfiles.isEmpty) return;
+    _recoveryPromptShown = true;
+    final profile = _profiles.recoverableProfiles.first;
+    final restore = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('${profile.name} is on this phone only'),
+        content: const Text(
+          'This profile is missing from cloud sync. It may have been created offline or deleted on another device. Restore it only if you want it on all your devices. Its local data is safe either way.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Later'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Restore to cloud'),
+          ),
+        ],
+      ),
+    );
+    if (!mounted || restore != true) return;
+    if (!await _profiles.restoreRecoverable(profile.id) && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Could not restore profile. Try again later.'),
+        ),
+      );
     }
   }
 
