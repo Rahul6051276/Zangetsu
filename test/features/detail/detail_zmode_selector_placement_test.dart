@@ -43,6 +43,7 @@ import 'package:watch_app/core/trailer/trailer_service.dart';
 import 'package:watch_app/core/zmode/match_store.dart';
 import 'package:watch_app/core/zmode/zmode_source_prefs.dart';
 import 'package:watch_app/core/zmode/source_matcher.dart';
+import 'package:watch_app/core/zmode/zmode_ids.dart';
 import 'package:watch_app/features/detail/detail_screen.dart';
 import 'package:watch_app/features/detail/wrong_title_sheet.dart';
 
@@ -53,11 +54,16 @@ class _StubSourceRepository implements SourceRepository {
     this._detail, {
     this.sourceList = const [],
     this.detailGate,
+    this.searchStartedBySource,
+    this.searchGates,
   });
   final MediaDetail _detail;
   final List<({String id, String name})> sourceList;
   final Completer<void>? detailGate;
+  final Map<String, Completer<void>>? searchStartedBySource;
+  final Map<String, Completer<List<MediaItem>>>? searchGates;
   final searchQueries = <String>[];
+  final searchedSources = <String?>[];
 
   @override
   noSuchMethod(Invocation i) => super.noSuchMethod(i);
@@ -89,7 +95,12 @@ class _StubSourceRepository implements SourceRepository {
     String? sourceId,
   }) async {
     searchQueries.add(query);
-    return const [];
+    searchedSources.add(sourceId);
+    final started = searchStartedBySource?[sourceId];
+    if (started != null && !started.isCompleted) {
+      started.complete();
+    }
+    return await searchGates?[sourceId]?.future ?? const [];
   }
 
   @override
@@ -400,6 +411,65 @@ void main() {
       expect(matchY, lessThan(synopsisY));
     },
   );
+
+  testWidgets('Auto Resolve can stop searching and keeps no late match', (
+    tester,
+  ) async {
+    const sources = [
+      (id: 'first', name: 'First'),
+      (id: 'second', name: 'Second'),
+    ];
+    final firstStarted = Completer<void>();
+    final secondStarted = Completer<void>();
+    final firstGate = Completer<List<MediaItem>>();
+    final secondGate = Completer<List<MediaItem>>();
+    final source = _StubSourceRepository(
+      _zmDetail,
+      sourceList: sources,
+      searchStartedBySource: {'first': firstStarted, 'second': secondStarted},
+      searchGates: {'first': firstGate, 'second': secondGate},
+    );
+
+    await pumpDetail(tester, _zmItem, _zmDetail, source: source);
+    await firstStarted.future;
+    await tester.pump();
+
+    expect(find.text('Auto Resolve · First · 1/2'), findsOneWidget);
+    final stop = find.byKey(const ValueKey('stop-auto-resolve'));
+    expect(stop, findsOneWidget);
+
+    firstGate.complete(const []);
+    await secondStarted.future;
+    await tester.pump();
+    expect(find.text('Auto Resolve · Second · 2/2'), findsOneWidget);
+
+    await tester.tap(stop);
+    await tester.pump();
+    expect(find.byKey(const ValueKey('stop-auto-resolve')), findsNothing);
+    expect(find.text('Auto Resolve'), findsOneWidget);
+
+    secondGate.complete([
+      MediaItem(
+        id: 'late',
+        title: _zmDetail.title,
+        url: 'https://second/show',
+        type: ProviderType.anime,
+        sourceId: 'second',
+      ),
+    ]);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 1));
+
+    expect(source.searchedSources, ['first', 'second']);
+    expect(
+      sl<MatchStore>().get(const ZCanonical(ZKind.anime, 'mal:5114'), 'first'),
+      isNull,
+    );
+    expect(
+      sl<MatchStore>().get(const ZCanonical(ZKind.anime, 'mal:5114'), 'second'),
+      isNull,
+    );
+  });
 
   testWidgets('a normal source item never shows the selector', (tester) async {
     await pumpDetail(tester, _plainItem, _plainDetail);

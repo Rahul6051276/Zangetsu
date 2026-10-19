@@ -35,6 +35,38 @@ void main() {
   });
 
   test(
+    'keeps the default profile first when cloud rows arrive out of order',
+    () async {
+      final remote = _MemoryProfileRemote()
+        ..rows['custom-a'] = const ViewerProfile(
+          id: 'custom-a',
+          name: 'Custom A',
+        )
+        ..rows['custom-b'] = const ViewerProfile(
+          id: 'custom-b',
+          name: 'Custom B',
+        )
+        ..rows[kDefaultProfileId] = const ViewerProfile(
+          id: kDefaultProfileId,
+          name: 'Tamananna',
+        );
+      final cloudStore = ViewerProfileStore(
+        remote: remote,
+        currentUserId: () => 'test-user',
+      );
+
+      await cloudStore.loadForUser();
+
+      expect(cloudStore.profiles.map((profile) => profile.id), [
+        kDefaultProfileId,
+        'custom-a',
+        'custom-b',
+      ]);
+      expect(cloudStore.activeProfile.name, 'Tamananna');
+    },
+  );
+
+  test(
     'keeps a previously saved fifth profile when loading old data',
     () async {
       final legacyProfiles = [

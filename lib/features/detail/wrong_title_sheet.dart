@@ -321,7 +321,7 @@ class _MatchLineState extends State<MatchLine> {
         child: ExcludeSemantics(child: child),
       );
     }
-    return InkWell(onTap: onTap, child: child);
+    return InkWell(key: key, onTap: onTap, child: child);
   }
 
   @override
@@ -355,24 +355,77 @@ class _MatchLineState extends State<MatchLine> {
             // source is resolved, so an empty box here left a hole between
             // Download and the synopsis for the whole sweep — which read as
             // "this title has no source selector" rather than "still looking".
+            final canStop =
+                state.auto &&
+                widget.canonical.kind != ZKind.manga &&
+                widget.canonical.kind != ZKind.novel;
+            final progress = state.progress;
             return Padding(
               padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
               child: Container(
                 height: 52,
-                alignment: AlignmentDirectional.centerStart,
-                padding: const EdgeInsetsDirectional.only(start: 14),
+                padding: const EdgeInsetsDirectional.only(start: 14, end: 4),
                 decoration: BoxDecoration(
                   color: AppColors.surface2,
                   borderRadius: BorderRadius.circular(8),
                 ),
-                child: Container(
-                  width: 120,
-                  height: 14,
-                  decoration: BoxDecoration(
-                    color: AppColors.surface,
-                    borderRadius: BorderRadius.circular(7),
-                  ),
-                ),
+                child: canStop
+                    ? Row(
+                        children: [
+                          SizedBox(
+                            width: 17,
+                            height: 17,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: AppColors.accent,
+                            ),
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Text(
+                              progress == null
+                                  ? 'Auto Resolve'
+                                  : 'Auto Resolve · ${progress.sourceName} · '
+                                        '${progress.current}/${progress.total}',
+                              style: AppText.button.copyWith(
+                                color: AppColors.textPrimary,
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          Tooltip(
+                            message: l10n.cancel,
+                            child: _tappable(
+                              key: const ValueKey('stop-auto-resolve'),
+                              onTap: _cubit.stopAutoResolve,
+                              semanticLabel: l10n.cancel,
+                              borderRadius: 24,
+                              child: SizedBox(
+                                width: 44,
+                                height: 44,
+                                child: Icon(
+                                  Icons.close_rounded,
+                                  size: 20,
+                                  color: AppColors.textSecondary,
+                                  semanticLabel: l10n.cancel,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      )
+                    : Container(
+                        alignment: AlignmentDirectional.centerStart,
+                        child: Container(
+                          width: 120,
+                          height: 14,
+                          decoration: BoxDecoration(
+                            color: AppColors.surface,
+                            borderRadius: BorderRadius.circular(7),
+                          ),
+                        ),
+                      ),
               ),
             );
           }

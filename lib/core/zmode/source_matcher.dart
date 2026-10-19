@@ -115,6 +115,7 @@ class SourceMatcher {
     String? altTitle,
     List<String> metadataAliases = const [],
     int? malId,
+    bool Function()? abandoned,
   }) async {
     // On TV, JS providers may not be loaded in the runtime (loadAll was
     // skipped). Ensure the provider is loaded before searching so the JS
@@ -134,8 +135,10 @@ class SourceMatcher {
     // Retry up to three distinct alternate titles only when the first query
     // has no validated match, bounding the extra provider calls on misses.
     Future<List<MediaItem>?> searchFor(String q) async {
+      if (abandoned?.call() ?? false) return null;
       try {
-        return await _sources.search(q, sourceId: sourceId);
+        final results = await _sources.search(q, sourceId: sourceId);
+        return (abandoned?.call() ?? false) ? null : results;
       } catch (e) {
         // Mihon/Aniyomi/LNReader report a challenge by THROWING, and this
         // catch used to drop it on the floor — the source just vanished from
@@ -187,6 +190,7 @@ class SourceMatcher {
         altTitle,
         metadataAliases,
       )) {
+        if (abandoned?.call() ?? false) return null;
         debugPrint('[zmode] $sourceId · nothing for "$title", trying "$alias"');
         final alternateResults = await searchFor(alias);
         if (alternateResults == null) continue;
@@ -236,6 +240,7 @@ class SourceMatcher {
       showTitle: found.title,
       pinned: false,
     );
+    if (abandoned?.call() ?? false) return null;
     await _store.save(c, m);
     return m;
   }
@@ -269,7 +274,9 @@ class SourceMatcher {
     String? altTitle,
     List<String> metadataAliases = const [],
     int? malId,
+    bool Function()? abandoned,
   }) async {
+    if (abandoned?.call() ?? false) return null;
     final saved = _store.get(c, sourceId);
     // An empty showUrl is a pin with no match behind it — the user picked a
     // source that didn't have the title. It is a real choice, so it keeps
@@ -280,6 +287,7 @@ class SourceMatcher {
       // Even with a cached match, the runtime may be empty on TV — ensure
       // the provider is loaded so episodes()/sources() can resolve.
       final loaded = await _sources.ensureSourceLoaded(sourceId);
+      if (abandoned?.call() ?? false) return null;
       debugPrint(
         '[source-matcher] matchOn · "$sourceId" → cached '
         '(pinned=${saved.pinned} installed=${_sources.hasSource(sourceId)} '
@@ -307,6 +315,7 @@ class SourceMatcher {
       altTitle: altTitle,
       metadataAliases: metadataAliases,
       malId: malId,
+      abandoned: abandoned,
     );
   }
 
@@ -323,6 +332,27 @@ class SourceMatcher {
   /// a real search per installed source. Without this they raced, doubling
   /// the network work and the wait.
   final Map<String, Future<SourceMatch?>> _inFlight = {};
+  final Map<String, void Function()> _cancelInFlight = {};
+  final Map<String, ({String sourceName, int current, int total})>
+  _resolveProgress = {};
+  final Map<
+    String,
+    Set<void Function(String sourceName, int current, int total)>
+  >
+  _resolveProgressListeners = {};
+
+  void _publishProgress(String key, String sourceName, int current, int total) {
+    final progress = (sourceName: sourceName, current: current, total: total);
+    _resolveProgress[key] = progress;
+    for (final listener
+        in _resolveProgressListeners[key]?.toList() ?? const []) {
+      listener(sourceName, current, total);
+    }
+  }
+
+  /// Stop the current Auto Resolve title sweep after its active provider call
+  /// returns. The provider API has no cancellation handle for that call.
+  void cancelResolve(ZCanonical c) => _cancelInFlight[c.key]?.call();
 
   Future<SourceMatch?> resolve(
     ZCanonical c, {
@@ -331,9 +361,21 @@ class SourceMatcher {
     List<String> metadataAliases = const [],
     int? malId,
     bool Function()? abandoned,
+    void Function(String sourceName, int current, int total)? onProgress,
   }) {
+    if (onProgress != null) {
+      _resolveProgressListeners.putIfAbsent(c.key, () => {}).add(onProgress);
+      final progress = _resolveProgress[c.key];
+      if (progress != null) {
+        onProgress(progress.sourceName, progress.current, progress.total);
+      }
+    }
     final running = _inFlight[c.key];
     if (running != null) return running;
+    var cancelled = false;
+    void cancel() => cancelled = true;
+    _cancelInFlight[c.key] = cancel;
+    bool gone() => cancelled || (abandoned?.call() ?? false);
     // Braces, NOT an arrow: Map.remove returns the removed value, and
     // whenComplete awaits a returned Future — an arrow here hands it the very
     // future being completed, so it waits on itself and never finishes.
@@ -344,9 +386,16 @@ class SourceMatcher {
           altTitle: altTitle,
           metadataAliases: metadataAliases,
           malId: malId,
-          abandoned: abandoned,
+          abandoned: gone,
+          onProgress: (sourceName, current, total) =>
+              _publishProgress(c.key, sourceName, current, total),
         ).whenComplete(() {
           _inFlight.remove(c.key);
+          _resolveProgress.remove(c.key);
+          _resolveProgressListeners.remove(c.key);
+          if (identical(_cancelInFlight[c.key], cancel)) {
+            _cancelInFlight.remove(c.key);
+          }
         });
     _inFlight[c.key] = f;
     return f;
@@ -359,6 +408,7 @@ class SourceMatcher {
     List<String> metadataAliases = const [],
     int? malId,
     bool Function()? abandoned,
+    void Function(String sourceName, int current, int total)? onProgress,
   }) async {
     if (abandoned?.call() ?? false) {
       debugPrint(
@@ -382,6 +432,7 @@ class SourceMatcher {
         altTitle: altTitle,
         metadataAliases: metadataAliases,
         malId: malId,
+        abandoned: abandoned,
       );
     }
     // An explicit kind-wide default (set via the "source went quiet" recovery
@@ -400,6 +451,7 @@ class SourceMatcher {
         altTitle: altTitle,
         metadataAliases: metadataAliases,
         malId: malId,
+        abandoned: abandoned,
       );
     }
     final sweep = _sweepCandidates(c.kind);
@@ -447,7 +499,8 @@ class SourceMatcher {
       '(${sweep.map((s) => s.id).take(5).join(",")}'
       '${sweep.length > 5 ? "…" : ""})',
     );
-    for (final s in sweep) {
+    for (var i = 0; i < sweep.length; i++) {
+      final s = sweep[i];
       // The viewer left: stop before the next source. Going back out of a detail
       // screen used to leave this sweep running, so tapping titles quickly piled
       // up one live search per screen and each new tap waited behind all the
@@ -462,6 +515,7 @@ class SourceMatcher {
         );
         return null;
       }
+      onProgress?.call(s.name, i + 1, sweep.length);
       final m = await matchOn(
         c,
         s.id,
@@ -469,7 +523,9 @@ class SourceMatcher {
         altTitle: altTitle,
         metadataAliases: metadataAliases,
         malId: malId,
+        abandoned: abandoned,
       );
+      if (abandoned?.call() ?? false) return null;
       if (m != null) {
         debugPrint('[source-matcher] _resolve · AUTO → ${s.id}');
         if (isReading) await _prefs.rememberLastGood(c.kind, s.id);

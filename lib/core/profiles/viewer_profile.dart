@@ -274,6 +274,8 @@ class ViewerProfileStore {
     if (!next.any((p) => p.id == kDefaultProfileId)) {
       next.insert(0, _defaultProfile(displayName));
     }
+    final defaultIndex = next.indexWhere((p) => p.id == kDefaultProfileId);
+    if (defaultIndex > 0) next.insert(0, next.removeAt(defaultIndex));
     if (!isCurrentLoad()) return;
     await _box.put(_recoveryKey(owner), [
       for (final profile in recoverable) profile.toJson(),

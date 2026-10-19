@@ -14,6 +14,7 @@ class SourceSelectState {
     this.loading = false,
     this.resolved = false,
     this.auto = false,
+    this.progress,
   });
 
   /// The installed sources valid for this title's kind.
@@ -40,6 +41,9 @@ class SourceSelectState {
   /// over this (see [SourceMatcher]), in which case this is false.
   final bool auto;
 
+  /// Current candidate while an Auto Resolve sweep is searching.
+  final ({String sourceName, int current, int total})? progress;
+
   SourceSelectState copyWith({
     List<({String id, String name})>? sources,
     String? selectedId,
@@ -47,6 +51,8 @@ class SourceSelectState {
     bool? loading,
     bool? resolved,
     bool? auto,
+    ({String sourceName, int current, int total})? progress,
+    bool clearProgress = false,
   }) => SourceSelectState(
     sources: sources ?? this.sources,
     selectedId: selectedId ?? this.selectedId,
@@ -54,6 +60,7 @@ class SourceSelectState {
     loading: loading ?? this.loading,
     resolved: resolved ?? this.resolved,
     auto: auto ?? this.auto,
+    progress: clearProgress ? null : progress ?? this.progress,
   );
 }
 
@@ -135,6 +142,7 @@ class SourceSelectCubit extends Cubit<SourceSelectState> {
   final String? altTitle;
   final int? malId;
   final List<String> metadataAliases;
+  int _loadGeneration = 0;
 
   /// Keeps [state.sources] in sync with a live [SourceRepository] read.
   /// TV skips boot-time provider load, so the list at widget creation is
@@ -159,6 +167,7 @@ class SourceSelectCubit extends Cubit<SourceSelectState> {
         loading: state.loading,
         resolved: resolved,
         auto: auto,
+        progress: state.progress,
       ),
     );
   }
@@ -168,15 +177,24 @@ class SourceSelectCubit extends Cubit<SourceSelectState> {
   /// sweeps all sources; this row only reflects prefs + cached matches.
   Future<void> load() async {
     if (state.sources.isEmpty) return;
-    emit(state.copyWith(loading: true));
+    final generation = ++_loadGeneration;
+    emit(state.copyWith(loading: true, clearProgress: true));
     final m = await _matcher.resolve(
       _canonical,
       title: _title,
       altTitle: altTitle,
       metadataAliases: metadataAliases,
       malId: malId,
+      onProgress: (sourceName, current, total) {
+        if (isClosed || generation != _loadGeneration) return;
+        emit(
+          state.copyWith(
+            progress: (sourceName: sourceName, current: current, total: total),
+          ),
+        );
+      },
     );
-    if (isClosed) return;
+    if (isClosed || generation != _loadGeneration) return;
     final auto = _matcher.sourceForTitle(_canonical) == null;
     emit(
       SourceSelectState(
@@ -188,6 +206,16 @@ class SourceSelectCubit extends Cubit<SourceSelectState> {
         auto: auto,
       ),
     );
+  }
+
+  /// Stop this title's Auto Resolve sweep without discarding any match already
+  /// saved. The source currently being queried may finish, but no later source
+  /// is started and its late result is ignored.
+  void stopAutoResolve() {
+    if (!state.loading || !state.auto) return;
+    _loadGeneration++;
+    _matcher.cancelResolve(_canonical);
+    emit(state.copyWith(loading: false, clearProgress: true));
   }
 
   /// The user picked [id] for THIS title only — searches it fresh and pins
