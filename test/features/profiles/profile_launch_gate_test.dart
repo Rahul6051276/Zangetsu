@@ -122,6 +122,17 @@ void main() {
     expect(find.text('Edit'), findsNothing);
   });
 
+  testWidgets('profile manager does not add a page entrance animation', (
+    tester,
+  ) async {
+    await tester.pumpWidget(const MaterialApp(home: ViewerProfilesScreen()));
+
+    expect(
+      find.byKey(const ValueKey('profile-manager-content-entrance')),
+      findsNothing,
+    );
+  });
+
   testWidgets('phone picker keeps its heading with the lower profile choices', (
     tester,
   ) async {
