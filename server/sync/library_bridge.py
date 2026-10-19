@@ -80,12 +80,8 @@ class LibraryBridge:
             previous.changed_at, previous.origin, previous.id
         ) > (event.changed_at, event.origin, event.id):
             winner = previous
-        target = self.vps if event.origin == "supabase" else self.source
-        if winner is event:
-            target.apply(event)
-        else:
-            origin = self.source if event.origin == "supabase" else self.vps
-            origin.apply(winner)
+        self.source.apply(winner)
+        self.vps.apply(winner)
         self.state.commit(event, winner)
         return True
 

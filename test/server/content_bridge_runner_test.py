@@ -50,7 +50,7 @@ class ContentEventTest(unittest.TestCase):
                          {"profile_id": "viewer"}, "delete", None, now).key,
         )
 
-    def test_new_source_event_only_writes_to_vps(self):
+    def test_new_source_event_is_applied_to_both_sides(self):
         event = LibraryEvent(
             "supabase", 1, "reading_history", "user", "",
             {"source_id": "source", "show_id": "show"},
@@ -60,10 +60,10 @@ class ContentEventTest(unittest.TestCase):
         vps = _Endpoint(None)
         state = _State()
         self.assertTrue(LibraryBridge(source, vps, state).process_once())
-        self.assertEqual(source.applied, [])
+        self.assertEqual(source.applied, [event])
         self.assertEqual(vps.applied, [event])
 
-    def test_stale_event_is_reverted_on_its_origin(self):
+    def test_stale_event_is_overwritten_by_the_winner_on_both_sides(self):
         now = datetime.now(timezone.utc)
         key = {"profile_id": "viewer"}
         stale = LibraryEvent("supabase", 2, "viewer_profiles", "user", "",
@@ -75,7 +75,22 @@ class ContentEventTest(unittest.TestCase):
         state = _State(previous=winner)
         self.assertTrue(LibraryBridge(source, vps, state).process_once())
         self.assertEqual(source.applied, [winner])
-        self.assertEqual(vps.applied, [])
+        self.assertEqual(vps.applied, [winner])
+
+    def test_concurrent_edits_converge_on_the_newer_event(self):
+        now = datetime.now(timezone.utc)
+        key = {"source_id": "source", "show_id": "show"}
+        older = LibraryEvent("supabase", 1, "reading_history", "user", "",
+                             key, "upsert", {"pos": 1}, now)
+        newer = LibraryEvent("vps", 2, "reading_history", "user", "",
+                             key, "delete", None, now.replace(year=now.year + 1))
+        source = _Endpoint(older)
+        vps = _Endpoint(newer)
+        bridge = LibraryBridge(source, vps, _State())
+        self.assertTrue(bridge.process_once())
+        self.assertTrue(bridge.process_once())
+        self.assertIs(source.applied[-1], newer)
+        self.assertIs(vps.applied[-1], newer)
 
 
 class _Endpoint:
@@ -83,8 +98,10 @@ class _Endpoint:
         self.event = event
         self.applied = []
 
-    def next_event(self, _):
-        return self.event
+    def next_event(self, after):
+        if self.event is not None and self.event.id > after:
+            return self.event
+        return None
 
     def apply(self, event):
         self.applied.append(event)
@@ -93,15 +110,17 @@ class _Endpoint:
 class _State:
     def __init__(self, previous=None):
         self.previous = previous
+        self.cursors = {}
 
-    def cursor(self, _):
-        return 0
+    def cursor(self, origin):
+        return self.cursors.get(origin, 0)
 
     def latest(self, _):
         return self.previous
 
-    def commit(self, _, winner):
+    def commit(self, processed, winner):
         self.previous = winner
+        self.cursors[processed.origin] = processed.id
 
 
 if __name__ == "__main__":
