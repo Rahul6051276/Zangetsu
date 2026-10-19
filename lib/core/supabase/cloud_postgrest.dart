@@ -3,11 +3,7 @@ import 'package:supabase_flutter/supabase_flutter.dart'
 
 import 'supabase_service.dart';
 
-/// Routes table access to the active cloud backend.
-///
-/// Older builds keep talking to Supabase. When [vpsClient] is supplied, the
-/// same PostgREST calls go to the VPS instead — Supabase stays the auth issuer
-/// and its access token is forwarded as the bearer credential.
+/// Sends app cloud-data table access to the VPS using a Supabase access token.
 class CloudPostgrest {
   CloudPostgrest(
     this._service, {
@@ -22,7 +18,9 @@ class CloudPostgrest {
 
   PostgrestQueryBuilder from(String table) {
     final vpsClient = _vpsClient;
-    if (vpsClient == null) return _service.client.from(table);
+    if (vpsClient == null) {
+      throw StateError('VPS cloud backend is not configured');
+    }
     final token =
         (_accessToken ??
                 () => _service.client.auth.currentSession?.accessToken)()

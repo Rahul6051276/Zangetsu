@@ -248,24 +248,21 @@ Future<void> initDependencies() async {
   String? currentUserId() => sl<SupabaseService>().currentUserId();
 
   // Supabase issues auth tokens; cloud data requests use the VPS client.
-  PostgrestClient? vpsClient;
-  if (Environment.vpsCloudSyncEnabled) {
-    final endpoint = Uri.tryParse(Environment.vpsSyncUrl);
-    if (endpoint == null ||
-        endpoint.scheme != 'https' ||
-        endpoint.host.isEmpty ||
-        endpoint.userInfo.isNotEmpty ||
-        endpoint.hasQuery ||
-        endpoint.hasFragment) {
-      throw StateError('VPS_SYNC_URL must be a valid HTTPS sync endpoint');
-    }
-    vpsClient = PostgrestClient(
-      endpoint.toString().replaceFirst(RegExp(r'/$'), ''),
-    );
+  final endpoint = Uri.tryParse(Environment.vpsSyncUrl);
+  if (endpoint == null ||
+      endpoint.scheme != 'https' ||
+      endpoint.host.isEmpty ||
+      endpoint.userInfo.isNotEmpty ||
+      endpoint.hasQuery ||
+      endpoint.hasFragment) {
+    throw StateError('VPS_SYNC_URL must be a valid HTTPS sync endpoint');
   }
+  final vpsClient = PostgrestClient(
+    endpoint.toString().replaceFirst(RegExp(r'/$'), ''),
+  );
   String? cloudAccessToken() =>
       sl<SupabaseService>().client.auth.currentSession?.accessToken;
-  final backendNamespace = Environment.vpsCloudSyncEnabled ? 'vps' : '';
+  const backendNamespace = 'vps';
 
   await ViewerProfileStore.init();
   sl.registerSingleton<ViewerProfileStore>(
@@ -337,13 +334,11 @@ Future<void> initDependencies() async {
     WatchHistory(
       sl<SupabaseService>(),
       currentUserId,
-      remote: vpsClient == null
-          ? null
-          : HistoryRemote(
-              sl<SupabaseService>(),
-              vpsClient: vpsClient,
-              accessToken: cloudAccessToken,
-            ),
+      remote: HistoryRemote(
+        sl<SupabaseService>(),
+        vpsClient: vpsClient,
+        accessToken: cloudAccessToken,
+      ),
       currentProfileId: currentProfileId,
       backendNamespace: backendNamespace,
     ),
@@ -353,13 +348,11 @@ Future<void> initDependencies() async {
     ReadHistory(
       sl<SupabaseService>(),
       currentUserId,
-      remote: vpsClient == null
-          ? null
-          : ReadingHistoryRemote(
-              sl<SupabaseService>(),
-              vpsClient: vpsClient,
-              accessToken: cloudAccessToken,
-            ),
+      remote: ReadingHistoryRemote(
+        sl<SupabaseService>(),
+        vpsClient: vpsClient,
+        accessToken: cloudAccessToken,
+      ),
       currentProfileId: currentProfileId,
       backendNamespace: backendNamespace,
     ),
@@ -398,13 +391,11 @@ Future<void> initDependencies() async {
     MyListStore(
       sl<SupabaseService>(),
       currentUserId,
-      remote: vpsClient == null
-          ? null
-          : MyListRemote(
-              sl<SupabaseService>(),
-              vpsClient: vpsClient,
-              accessToken: cloudAccessToken,
-            ),
+      remote: MyListRemote(
+        sl<SupabaseService>(),
+        vpsClient: vpsClient,
+        accessToken: cloudAccessToken,
+      ),
       currentProfileId: currentProfileId,
       backendNamespace: backendNamespace,
       statusOf: (m) => sl<ListStatusStore>().statusOf(m)?.name,

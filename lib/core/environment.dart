@@ -20,12 +20,7 @@ class Environment {
         'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVvZ3d6cmxmb2VyY2Z3Y2Z3bG12Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQzNjgzODIsImV4cCI6MjA5OTk0NDM4Mn0.qr-nHnB9vb7BodP55XJ9-6Rwp__eOGCS6txhLiuWVZw',
   );
 
-  // Cloud data sync uses the VPS by default; Supabase remains the auth issuer.
-  // Set VPS_CLOUD_SYNC=false only for an intentional rollback build.
-  static const bool vpsCloudSyncEnabled = bool.fromEnvironment(
-    'VPS_CLOUD_SYNC',
-    defaultValue: true,
-  );
+  // Supabase issues auth tokens; all app cloud-data sync uses the VPS.
   static const String vpsSyncUrl = String.fromEnvironment(
     'VPS_SYNC_URL',
     defaultValue: 'https://sync.zangetsu.online',

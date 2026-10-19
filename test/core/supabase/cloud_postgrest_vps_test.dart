@@ -7,6 +7,7 @@ import 'package:watch_app/core/playback/category_store.dart';
 import 'package:watch_app/core/playback/my_list.dart';
 import 'package:watch_app/core/profiles/viewer_profile.dart';
 import 'package:watch_app/core/reading/read_history.dart';
+import 'package:watch_app/core/supabase/cloud_postgrest.dart';
 import 'package:watch_app/core/supabase/supabase_service.dart';
 
 /// Every remote that can be routed to the VPS must send the Supabase access
@@ -162,5 +163,20 @@ void main() {
       throwsStateError,
     );
     expect(paths, isEmpty);
+  });
+
+  test('missing VPS client never falls back to Supabase table access', () {
+    final cloud = CloudPostgrest(SupabaseService());
+
+    expect(
+      () => cloud.from('mylist'),
+      throwsA(
+        isA<StateError>().having(
+          (error) => error.message,
+          'message',
+          'VPS cloud backend is not configured',
+        ),
+      ),
+    );
   });
 }
