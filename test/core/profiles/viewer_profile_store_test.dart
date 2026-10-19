@@ -170,8 +170,56 @@ void main() {
 
       expect(reloaded.profiles.any((p) => p.id == guest.id), isFalse);
       expect(remote.rows.containsKey(guest.id), isFalse);
+      expect(
+        Hive.box(ViewerProfileStore.boxName).get('recoverable:test-user'),
+        contains(predicate((value) => value is Map && value['id'] == guest.id)),
+      );
     },
   );
+
+  test('keeps an old offline-only profile for explicit recovery', () async {
+    final remote = _MemoryProfileRemote();
+    final box = Hive.box(ViewerProfileStore.boxName);
+    await box.put('profiles:test-user', [
+      const ViewerProfile(id: kDefaultProfileId, name: 'Home').toJson(),
+      const ViewerProfile(id: 'offline-guest', name: 'Offline Guest').toJson(),
+    ]);
+    remote.rows[kDefaultProfileId] = const ViewerProfile(
+      id: kDefaultProfileId,
+      name: 'Home',
+    );
+
+    final cloudStore = ViewerProfileStore(
+      remote: remote,
+      currentUserId: () => 'test-user',
+    );
+    await cloudStore.loadForUser();
+
+    expect(cloudStore.profiles.map((p) => p.id), [kDefaultProfileId]);
+    expect(remote.rows.containsKey('offline-guest'), isFalse);
+    expect(
+      box.get('recoverable:test-user'),
+      contains(
+        predicate((value) => value is Map && value['id'] == 'offline-guest'),
+      ),
+    );
+
+    remote.offline = true;
+    expect(await cloudStore.restoreRecoverable('offline-guest'), isFalse);
+    expect(cloudStore.recoverableProfiles.single.id, 'offline-guest');
+    remote.offline = false;
+    expect(await cloudStore.restoreRecoverable('offline-guest'), isTrue);
+    expect(remote.rows['offline-guest']?.name, 'Offline Guest');
+    expect(cloudStore.profiles.any((p) => p.id == 'offline-guest'), isTrue);
+    expect(cloudStore.recoverableProfiles, isEmpty);
+
+    final reloaded = ViewerProfileStore(
+      remote: remote,
+      currentUserId: () => 'test-user',
+    );
+    await reloaded.loadForUser();
+    expect(reloaded.profiles.any((p) => p.id == 'offline-guest'), isTrue);
+  });
 
   test(
     'does not revive a cloud-deleted profile after an offline edit',

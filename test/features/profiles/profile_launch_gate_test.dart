@@ -57,6 +57,42 @@ void main() {
     expect(find.text('Main screen'), findsOneWidget);
   });
 
+  testWidgets('asks before uploading an old phone-only profile', (
+    tester,
+  ) async {
+    final remote = _RecoveryProfileRemote();
+    final box = Hive.box(ViewerProfileStore.boxName);
+    await tester.runAsync(() async {
+      await box.put('profiles:test-user', [
+        const ViewerProfile(id: kDefaultProfileId, name: 'Home').toJson(),
+        const ViewerProfile(id: 'old-guest', name: 'Old Guest').toJson(),
+      ]);
+    });
+    remote.rows[kDefaultProfileId] = const ViewerProfile(
+      id: kDefaultProfileId,
+      name: 'Home',
+    );
+    profiles = ViewerProfileStore(
+      remote: remote,
+      currentUserId: () => 'test-user',
+    );
+    await tester.runAsync(profiles.loadForUser);
+    GetIt.instance.unregister<ViewerProfileStore>();
+    GetIt.instance.registerSingleton<ViewerProfileStore>(profiles);
+
+    await tester.pumpWidget(
+      const MaterialApp(home: ViewerProfilesScreen(selectionOnly: true)),
+    );
+    await tester.pump();
+
+    expect(find.text('Old Guest is on this phone only'), findsOneWidget);
+    expect(remote.rows.containsKey('old-guest'), isFalse);
+    await tester.tap(find.text('Later'));
+    await tester.pumpAndSettle();
+    expect(remote.rows.containsKey('old-guest'), isFalse);
+    expect(profiles.recoverableProfiles.single.id, 'old-guest');
+  });
+
   testWidgets('profile tap finishes the picker transition within 400ms', (
     tester,
   ) async {
@@ -1016,5 +1052,25 @@ class _ProfileGateHeroProbe extends StatelessWidget {
               ),
       ),
     );
+  }
+}
+
+class _RecoveryProfileRemote implements ViewerProfileRemote {
+  final rows = <String, ViewerProfile>{};
+
+  @override
+  Future<List<Map<String, dynamic>>> listFor(String userId) async => [
+    for (final profile in rows.values)
+      {'profile_id': profile.id, ...profile.toJson()},
+  ];
+
+  @override
+  Future<void> upsert(String userId, ViewerProfile profile) async {
+    rows[profile.id] = profile;
+  }
+
+  @override
+  Future<void> delete(String userId, String profileId) async {
+    rows.remove(profileId);
   }
 }
