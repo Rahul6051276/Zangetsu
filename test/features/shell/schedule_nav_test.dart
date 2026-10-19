@@ -822,6 +822,9 @@ class _TestViewerProfileStore extends ViewerProfileStore {
   List<ViewerProfile> get profiles => List.unmodifiable(_profiles);
 
   @override
+  List<ViewerProfile> get recoverableProfiles => const [];
+
+  @override
   bool get askOnLaunch => true;
 
   @override
