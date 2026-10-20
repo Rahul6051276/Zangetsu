@@ -71,22 +71,36 @@ class SourceMatcher {
   }
 
   String? sourceForTitle(ZCanonical c) {
-    return _prefs.pinnedForTitle(c) ?? _prefs.get(c.kind);
+    return pinnedSource(c) ?? _prefs.get(c.kind);
   }
 
-  String? pinnedSource(ZCanonical c) => _prefs.pinnedForTitle(c);
+  String? pinnedSource(ZCanonical c) {
+    final sel = _prefs.get(c.kind);
+    if (sel != null) {
+      final m = _store.get(c, sel);
+      if (m != null && m.pinned) return m.sourceId;
+    }
+    return null;
+  }
 
   Future<void> chooseSource(ZCanonical c, String? sourceId) async {
     if (sourceId == null) {
       await clearAuto(c);
     } else {
-      await _prefs.setPinnedForTitle(c, sourceId);
+      await _prefs.set(c.kind, sourceId);
       _sourceChanged(c);
     }
   }
 
+  Future<void> selectSource(ZKind kind, String sourceId) async {
+    await _prefs.set(kind, sourceId);
+  }
+
   Future<void> clearAuto(ZCanonical c) async {
-    await _prefs.clearPinnedForTitle(c);
+    final sel = _prefs.get(c.kind);
+    if (sel != null) {
+      await _store.delete(c, sel);
+    }
     _sourceChanged(c);
   }
 
@@ -98,7 +112,7 @@ class SourceMatcher {
     List<String> metadataAliases = const [],
     int? malId,
   }) async {
-    await _prefs.setPinnedForTitle(c, sourceId);
+    await _prefs.set(c.kind, sourceId);
     final m = await resolveOn(
       c,
       sourceId,
@@ -123,8 +137,8 @@ class SourceMatcher {
     return null;
   }
 
-  Future<void> pinManual(ZCanonical c, MediaItem item) async {
-    await _prefs.setPinnedForTitle(c, item.sourceId);
+  Future<SourceMatch> pinManual(ZCanonical c, MediaItem item) async {
+    await _prefs.set(c.kind, item.sourceId);
     final m = SourceMatch(
       sourceId: item.sourceId,
       showUrl: item.url,
@@ -134,9 +148,10 @@ class SourceMatcher {
     );
     await _store.save(c, m);
     _sourceChanged(c);
+    return m;
   }
 
-  Future<void> pinForTitle(ZCanonical c, MediaItem item) => pinManual(c, item);
+  Future<SourceMatch> pinForTitle(ZCanonical c, MediaItem item) => pinManual(c, item);
 
   String? cfBlockedUrl(ZKind kind) => null;
 
