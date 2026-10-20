@@ -89,6 +89,11 @@ class _SeeAllScreenState extends State<SeeAllScreen> {
     }
   }
 
+  double _parseScore(Object? scoreVal) {
+    if (scoreVal == null) return 0.0;
+    return double.tryParse(scoreVal.toString()) ?? 0.0;
+  }
+
   void _applyLocalFilters() {
     final query = _queryController.text.trim().toLowerCase();
     var filtered = _rawItems.where((item) {
@@ -97,12 +102,12 @@ class _SeeAllScreenState extends State<SeeAllScreen> {
       }
       if (_filters.year != null && _filters.year! > 0) {
         final yearStr = _filters.year.toString();
-        final releaseMatch = (item.releaseDate ?? '').contains(yearStr);
         final titleMatch = item.title.contains(yearStr);
-        if (!releaseMatch && !titleMatch) return false;
+        final descMatch = item.description.contains(yearStr);
+        if (!titleMatch && !descMatch) return false;
       }
       if (_filters.minScore != null && _filters.minScore! > 0) {
-        final score = double.tryParse(item.score ?? '0') ?? 0;
+        final score = _parseScore(item.score);
         final target = _filters.minScore! > 10 ? _filters.minScore! / 10.0 : _filters.minScore!.toDouble();
         if (score < target) return false;
       }
@@ -111,8 +116,8 @@ class _SeeAllScreenState extends State<SeeAllScreen> {
 
     if (_filters.sort == MetaSort.score) {
       filtered.sort((a, b) {
-        final sa = double.tryParse(a.score ?? '0') ?? 0;
-        final sb = double.tryParse(b.score ?? '0') ?? 0;
+        final sa = _parseScore(a.score);
+        final sb = _parseScore(b.score);
         return sb.compareTo(sa);
       });
     }
@@ -342,7 +347,7 @@ class _SeeAllScreenState extends State<SeeAllScreen> {
                     headers: item.coverHeaders,
                     tags: widget.tagsFor?.call(item) ?? const [],
                     qualityBadge: item.quality,
-                    scoreBadge: item.score,
+                    scoreBadge: item.score?.toString(),
                     dubBadge: item.dubBadge,
                     cellWidth: cellW,
                     onTap: () => widget.onTap(item),
