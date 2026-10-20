@@ -1,4 +1,4 @@
-name: Build Android APKs (Mobile & TV)
+name: Build Zangetsu Android TV APK
 
 on:
   workflow_dispatch:
@@ -7,8 +7,8 @@ permissions:
   contents: write
 
 jobs:
-  build:
-    name: Build Android APKs
+  build-tv:
+    name: Build Official TV APK
     runs-on: ubuntu-latest
 
     steps:
@@ -30,22 +30,22 @@ jobs:
       - name: Install Dependencies
         run: flutter pub get
 
-      - name: Build Android Universal APK (TV & Mobile)
+      - name: Build Android TV Release APK
         run: flutter build apk --release
 
-      - name: Build Split APKs
-        run: flutter build apk --release --split-per-abi
+      - name: Prepare TV APK Asset
+        run: |
+          mkdir -p dist
+          cp build/app/outputs/flutter-apk/app-release.apk dist/Zangetsu-v2.3.2-tv.apk
 
-      - name: Create Release & Upload APKs
+      - name: Create TV Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: android-release-${{ github.run_number }}
-          name: Zangetsu Android Release #${{ github.run_number }}
+          tag_name: zangetsu-tv-build-${{ github.run_number }}
+          name: Zangetsu TV Release #${{ github.run_number }}
           draft: false
           prerelease: false
           files: |
-            build/app/outputs/flutter-apk/app-release.apk
-            build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
-            build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk
+            dist/Zangetsu-v2.3.2-tv.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
