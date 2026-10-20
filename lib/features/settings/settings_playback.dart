@@ -5,10 +5,6 @@ part of 'settings_screen.dart';
 // Playback
 // ---------------------------------------------------------------------------
 
-/// App-wide playback defaults — default quality / audio, autoplay, speed,
-/// skip interval, keep-screen-on and resume. Reads and writes the shared
-/// [PlaybackPrefs] singleton; rebuilds after each change so the value
-/// subtitles stay current.
 class PlaybackSettingsScreen extends StatefulWidget {
   const PlaybackSettingsScreen({super.key});
 
@@ -33,7 +29,6 @@ class _PlaybackSettingsScreenState extends State<PlaybackSettingsScreen> {
     });
   }
 
-  // ── Video enhancement (GLSL upscaling shaders, downloaded on demand) ────────
   Future<void> _downloadShaders() async {
     if (_shaderDownloading) return;
     setState(() {
@@ -426,18 +421,6 @@ class _PlaybackSettingsScreenState extends State<PlaybackSettingsScreen> {
     if (mounted) setState(() {});
   }
 
-  Future<void> _pickCloseConfirmation() async {
-    final l10n = context.l10n;
-    final picked = await _pick<String>(
-      title: l10n.closeConfirmation,
-      options: closeConfirmPickerOptions(l10n),
-      current: _prefs.closeConfirmation,
-    );
-    if (picked == null) return;
-    await _prefs.setCloseConfirmation(picked);
-    if (mounted) setState(() {});
-  }
-
   Future<void> _pickSeekSecondsForTV() async {
     final picked = await _pick<int>(
       title: context.l10n.seekButtonDuration,
@@ -446,28 +429,6 @@ class _PlaybackSettingsScreenState extends State<PlaybackSettingsScreen> {
     );
     if (picked == null) return;
     await _prefs.setTvSeekSeconds(picked);
-    if (mounted) setState(() {});
-  }
-
-  static const List<(int, String)> _megaSkipDurationOptions = [
-    (10, '10s'),
-    (15, '15s'),
-    (30, '30s'),
-    (60, '60s'),
-    (85, '85s'),
-    (90, '90s'),
-    (120, '120s'),
-    (180, '180s'),
-  ];
-
-  Future<void> _pickMegaSkipDuration() async {
-    final picked = await _pick<int>(
-      title: context.l10n.megaSkipDuration,
-      options: _megaSkipDurationOptions,
-      current: _prefs.megaSkipSeconds,
-    );
-    if (picked == null) return;
-    await _prefs.setMegaSkipSeconds(picked);
     if (mounted) setState(() {});
   }
 
@@ -523,55 +484,12 @@ class _PlaybackSettingsScreenState extends State<PlaybackSettingsScreen> {
     );
   }
 
-  Widget _megaSkipDurationRow() {
-    double val = _prefs.megaSkipSeconds.toDouble();
-    return StatefulBuilder(
-      builder: (context, setLocal) => Padding(
-        padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-        child: Row(
-          children: [
-            Expanded(
-              child: SliderTheme(
-                data: SliderTheme.of(context).copyWith(
-                  activeTrackColor: AppColors.accent,
-                  thumbColor: AppColors.accent,
-                  trackHeight: 3,
-                ),
-                child: Slider(
-                  value: val,
-                  min: 5,
-                  max: 180,
-                  divisions: 35,
-                  label: '${val.round()}s',
-                  onChanged: (v) => setLocal(() => val = v),
-                  onChangeEnd: (v) async {
-                    await _prefs.setMegaSkipSeconds(v.round());
-                    if (mounted) setState(() {});
-                  },
-                ),
-              ),
-            ),
-            SizedBox(
-              width: 44,
-              child: Text(
-                '${val.round()}s',
-                style: AppText.caption.copyWith(color: AppColors.textSecondary),
-                textAlign: TextAlign.end,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     final l10n = context.l10n;
     final isTv = sl<AppMode>().isTv;
 
     return Scaffold(
-      backgroundColor: AppColors.background,
       appBar: AppBar(
         title: Text(l10n.playback),
         backgroundColor: Colors.transparent,
@@ -581,9 +499,7 @@ class _PlaybackSettingsScreenState extends State<PlaybackSettingsScreen> {
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
         children: [
           SettingsCard(
-            title: l10n.player,
             children: [
-              // Default Player picker available everywhere (TV & Phone)
               SettingsTile(
                 icon: Icons.play_circle_outline,
                 title: l10n.defaultPlayer,
@@ -592,7 +508,6 @@ class _PlaybackSettingsScreenState extends State<PlaybackSettingsScreen> {
                     : _prefs.externalPlayerName,
                 onTap: _pickPlayer,
               ),
-
               if (isTv) ...[
                 _toggleRow(
                   icon: Icons.tv,
@@ -611,7 +526,6 @@ class _PlaybackSettingsScreenState extends State<PlaybackSettingsScreen> {
                   onTap: _pickTvDecoderMode,
                 ),
               ],
-
               if (!isTv) ...[
                 SettingsTile(
                   icon: Icons.videocam_outlined,
@@ -626,7 +540,6 @@ class _PlaybackSettingsScreenState extends State<PlaybackSettingsScreen> {
                   onTap: _pickRenderer,
                 ),
               ],
-
               SettingsTile(
                 icon: Icons.high_quality_outlined,
                 title: l10n.defaultQuality,
@@ -649,7 +562,6 @@ class _PlaybackSettingsScreenState extends State<PlaybackSettingsScreen> {
           ),
           const SizedBox(height: 16),
           SettingsCard(
-            title: l10n.controls,
             children: [
               if (isTv)
                 SettingsTile(
@@ -697,7 +609,6 @@ class _PlaybackSettingsScreenState extends State<PlaybackSettingsScreen> {
           ),
           const SizedBox(height: 16),
           SettingsCard(
-            title: l10n.cache,
             children: [
               SettingsTile(
                 icon: Icons.sd_card_alert_outlined,
