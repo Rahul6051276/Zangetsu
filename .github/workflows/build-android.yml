@@ -1,0 +1,44 @@
+name: Build Android APKs (Mobile & TV)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build Android APKs
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          cache: true
+
+      - name: Install Dependencies
+        run: flutter pub get
+
+      - name: Build Android APKs (Split per ABI)
+        run: flutter build apk --release --split-per-abi
+
+      - name: Create Release & Upload APKs
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: android-release-${{ github.run_number }}
+          name: Zangetsu Android Release #${{ github.run_number }}
+          draft: false
+          prerelease: false
+          files: |
+            build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
+            build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
