@@ -30,7 +30,10 @@ jobs:
       - name: Install Dependencies
         run: flutter pub get
 
-      - name: Build Android APKs (Split per ABI)
+      - name: Build Android Universal APK (TV & Mobile)
+        run: flutter build apk --release
+
+      - name: Build Split APKs
         run: flutter build apk --release --split-per-abi
 
       - name: Create Release & Upload APKs
@@ -41,6 +44,7 @@ jobs:
           draft: false
           prerelease: false
           files: |
+            build/app/outputs/flutter-apk/app-release.apk
             build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
             build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk
         env:
