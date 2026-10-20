@@ -89,9 +89,10 @@ class _SeeAllScreenState extends State<SeeAllScreen> {
     }
   }
 
-  double _parseScore(Object? scoreVal) {
-    if (scoreVal == null) return 0.0;
-    return double.tryParse(scoreVal.toString()) ?? 0.0;
+  int _itemScore(MediaItem item) {
+    final s = item.score;
+    if (s == null) return 0;
+    return s;
   }
 
   void _applyLocalFilters() {
@@ -102,24 +103,18 @@ class _SeeAllScreenState extends State<SeeAllScreen> {
       }
       if (_filters.year != null && _filters.year! > 0) {
         final yearStr = _filters.year.toString();
-        final titleMatch = item.title.contains(yearStr);
-        final descMatch = item.description.contains(yearStr);
-        if (!titleMatch && !descMatch) return false;
+        if (!item.title.contains(yearStr)) return false;
       }
       if (_filters.minScore != null && _filters.minScore! > 0) {
-        final score = _parseScore(item.score);
-        final target = _filters.minScore! > 10 ? _filters.minScore! / 10.0 : _filters.minScore!.toDouble();
+        final score = _itemScore(item);
+        final target = _filters.minScore!;
         if (score < target) return false;
       }
       return true;
     }).toList();
 
     if (_filters.sort == MetaSort.score) {
-      filtered.sort((a, b) {
-        final sa = _parseScore(a.score);
-        final sb = _parseScore(b.score);
-        return sb.compareTo(sa);
-      });
+      filtered.sort((a, b) => _itemScore(b).compareTo(_itemScore(a)));
     }
 
     setState(() {
@@ -347,7 +342,7 @@ class _SeeAllScreenState extends State<SeeAllScreen> {
                     headers: item.coverHeaders,
                     tags: widget.tagsFor?.call(item) ?? const [],
                     qualityBadge: item.quality,
-                    scoreBadge: item.score?.toString(),
+                    scoreBadge: item.score,
                     dubBadge: item.dubBadge,
                     cellWidth: cellW,
                     onTap: () => widget.onTap(item),
