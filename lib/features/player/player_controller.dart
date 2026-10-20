@@ -930,9 +930,8 @@ class PlayerCubit extends Cubit<PlayerState> {
   }
 
   /// Render-quality mpv tuning that rides on the Anime4K tier. Enabling deband
-  /// smooths colour banding in gradients (cheap, big win for anime); the High
-  /// tier also switches to high-quality scaling (spline36/mitchell). Off resets
-  /// to mpv's defaults (deband off, bilinear), so it matches stock playback.
+  /// smooths colour banding in gradients; the High tier also uses spline36/
+  /// mitchell scaling. Off restores mpv's default scaler choices.
   Future<void> _applyRenderQuality(
     NativePlayer p, {
     required bool on,
@@ -943,10 +942,12 @@ class PlayerCubit extends Cubit<PlayerState> {
       await p.setProperty('deband-iterations', '2');
       await p.setProperty('deband-threshold', '48');
     }
-    final hq = on && high;
-    await p.setProperty('scale', hq ? 'spline36' : 'bilinear');
-    await p.setProperty('cscale', hq ? 'spline36' : 'bilinear');
-    await p.setProperty('dscale', hq ? 'mitchell' : 'bilinear');
+    for (final entry in mpvScalerOptions(
+      enhancementEnabled: on,
+      highQuality: high,
+    ).entries) {
+      await p.setProperty(entry.key, entry.value);
+    }
   }
 
   /// Change the Anime4K style (off/a/b/c) live and persist it. Note: the

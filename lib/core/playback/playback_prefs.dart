@@ -59,6 +59,28 @@ String? resolveVideoOutput({
   return shaderStyle != 'off' ? 'gpu-next' : null;
 }
 
+/// Scalers used alongside the optional mpv shader enhancement.
+Map<String, String> mpvScalerOptions({
+  required bool enhancementEnabled,
+  required bool highQuality,
+}) {
+  if (!enhancementEnabled) {
+    return const {'scale': 'lanczos', 'cscale': 'lanczos', 'dscale': 'hermite'};
+  }
+  if (highQuality) {
+    return const {
+      'scale': 'spline36',
+      'cscale': 'spline36',
+      'dscale': 'mitchell',
+    };
+  }
+  return const {
+    'scale': 'bilinear',
+    'cscale': 'bilinear',
+    'dscale': 'bilinear',
+  };
+}
+
 /// The family of hardware video decoder a platform exposes to mpv.
 ///
 /// Every platform names its own video chip: Android `mediacodec`, Apple
