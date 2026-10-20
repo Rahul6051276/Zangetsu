@@ -24,9 +24,6 @@ class _PlaybackSettingsScreenState extends State<PlaybackSettingsScreen> {
   bool _shaderDownloading = false;
   double _shaderProgress = 0;
 
-  // The main picker: Off + the three filters. The GPU tier (Mid/High) is a
-  // separate row below.
-
   @override
   void initState() {
     super.initState();
@@ -58,7 +55,6 @@ class _PlaybackSettingsScreenState extends State<PlaybackSettingsScreen> {
         context,
       ).showSnackBar(SnackBar(content: Text(context.l10n.shaderDownloadFailedCheckNetwork)));
     } else {
-      // Default to Sharpen so the download has an immediate, visible effect.
       if (_prefs.videoShaderStyle == 'off') {
         await _prefs.setVideoShaderStyle('a');
       }
@@ -140,7 +136,6 @@ class _PlaybackSettingsScreenState extends State<PlaybackSettingsScreen> {
     if (mounted) setState(() {});
   }
 
-  /// Multi-select of which fields the in-player info overlay shows.
   Future<void> _pickPlayerInfo() async {
     final selected = _prefs.playerInfoFields.toSet();
     await showModalBottomSheet<void>(
@@ -210,7 +205,6 @@ class _PlaybackSettingsScreenState extends State<PlaybackSettingsScreen> {
         ),
       ),
     );
-    // Persist the ticked fields in canonical (display) order.
     final ordered = [
       for (final f in kPlayerInfoFields)
         if (selected.contains(f.$1)) f.$1,
@@ -219,7 +213,6 @@ class _PlaybackSettingsScreenState extends State<PlaybackSettingsScreen> {
     if (mounted) setState(() {});
   }
 
-  // Ordered (value, label) options for each picker.
   static const List<(String, String)> _qualityOptions = [
     ('auto', 'Auto'),
     ('highest', 'Highest'),
@@ -281,8 +274,6 @@ class _PlaybackSettingsScreenState extends State<PlaybackSettingsScreen> {
     return fallback;
   }
 
-  /// Option picker: bottom sheet on phone, D-pad dialog on TV (Material sheet
-  /// focus paints behind opaque rows and is invisible at 10 feet).
   Future<T?> _pick<T>({required String title, required List<(T, String)> options, required T current}) {
     if (sl<AppMode>().isTv) {
       return showDialog<T>(
@@ -458,7 +449,6 @@ class _PlaybackSettingsScreenState extends State<PlaybackSettingsScreen> {
     if (mounted) setState(() {});
   }
 
-  // TV picker options for MegaSkip duration (the phone uses the inline slider).
   static const List<(int, String)> _megaSkipDurationOptions = [
     (10, '10s'),
     (15, '15s'),
@@ -481,16 +471,9 @@ class _PlaybackSettingsScreenState extends State<PlaybackSettingsScreen> {
     if (mounted) setState(() {});
   }
 
-  /// Default player picker: Built-in + any installed external players. Streams
-  /// then open in the chosen app instead of the in-app player.
   Future<void> _pickPlayer() async {
     final players = await ExternalPlayer().installed();
     if (!mounted) return;
-    // Already known-first from the native side. The ones past the known block
-    // still play — header-gated streams included, since those route through the
-    // local proxy for any player that isn't MX/Just — but we don't know which
-    // extras they read, so external subtitles and the resume position may be
-    // dropped. Flagged rather than hidden: it's a real caveat, not a blocker.
     final androidPlayerLabel = context.l10n.androidPlayer;
     final options = <(String, String)>[
       ('', context.l10n.builtInPlayer),
@@ -508,9 +491,6 @@ class _PlaybackSettingsScreenState extends State<PlaybackSettingsScreen> {
       current: _prefs.externalPlayerPackage,
     );
     if (picked == null) return;
-    // From `players`, not `options` — the option label carries the "no headers"
-    // hint, which belongs in the picker but not in the saved name shown on the
-    // settings row afterwards.
     final match = players.where((p) => p.package == picked);
     final label = picked == PlaybackPrefs.androidPlayerId
         ? androidPlayerLabel
@@ -521,8 +501,6 @@ class _PlaybackSettingsScreenState extends State<PlaybackSettingsScreen> {
     if (mounted) setState(() {});
   }
 
-  /// A boolean row rendered as a [SwitchListTile.adaptive] styled to sit
-  /// inside a [SettingsCard] alongside the [SettingsTile] picker rows.
   Widget _toggleRow({
     required IconData icon,
     required String title,
@@ -530,9 +508,6 @@ class _PlaybackSettingsScreenState extends State<PlaybackSettingsScreen> {
     required ValueChanged<bool> onChanged,
     String? subtitle,
   }) {
-    // A SettingsTile with a trailing Switch — identical geometry (icon inset,
-    // size, gap, right padding) to every other row, so icons and labels line up
-    // in one clean column. subtitleMaxLines:null lets long descriptions wrap.
     return SettingsTile(
       icon: icon,
       title: title,
@@ -548,64 +523,41 @@ class _PlaybackSettingsScreenState extends State<PlaybackSettingsScreen> {
     );
   }
 
-  /// MegaSkip jump-size slider (5–180s), shown under the MegaSkip toggle. Holds
-  /// the value locally while dragging (smooth, no per-tick Hive writes) and
-  /// persists on release.
   Widget _megaSkipDurationRow() {
     double val = _prefs.megaSkipSeconds.toDouble();
     return StatefulBuilder(
       builder: (context, setLocal) => Padding(
         padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+        child: Row(
           children: [
-            Row(
-              children: [
-                Icon(Icons.timer_outlined, color: AppColors.textSecondary, size: 22),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: Text(
-                    context.l10n.megaSkipDuration,
-                    style: AppText.headline.copyWith(
-                      color: AppColors.textPrimary,
-                      fontWeight: FontWeight.w500,
-                      fontSize: 15,
-                    ),
-                  ),
+            Expanded(
+              child: SliderTheme(
+                data: SliderTheme.of(context).copyWith(
+                  activeTrackColor: AppColors.accent,
+                  thumbColor: AppColors.accent,
+                  trackHeight: 3,
                 ),
-                Text(
-                  context.l10n.secondsShort(val.round()),
-                  style: AppText.headline.copyWith(color: AppColors.accent, fontWeight: FontWeight.w700, fontSize: 15),
+                child: Slider(
+                  value: val,
+                  min: 5,
+                  max: 180,
+                  divisions: 35,
+                  label: '${val.round()}s',
+                  onChanged: (v) => setLocal(() => val = v),
+                  onChangeEnd: (v) async {
+                    await _prefs.setMegaSkipSeconds(v.round());
+                    if (mounted) setState(() {});
+                  },
                 ),
-              ],
+              ),
             ),
-            Row(
-              children: [
-                Text('${PlaybackPrefs.megaSkipMin}', style: AppText.caption),
-                Expanded(
-                  child: SliderTheme(
-                    data: SliderTheme.of(context).copyWith(
-                      activeTrackColor: AppColors.accent,
-                      thumbColor: AppColors.accent,
-                      inactiveTrackColor: AppColors.textSecondary.withValues(alpha: 0.3),
-                      overlayColor: AppColors.accent.withValues(alpha: 0.2),
-                    ),
-                    child: Slider(
-                      min: PlaybackPrefs.megaSkipMin.toDouble(),
-                      max: PlaybackPrefs.megaSkipMax.toDouble(),
-                      divisions: PlaybackPrefs.megaSkipMax - PlaybackPrefs.megaSkipMin,
-                      value: val,
-                      label: context.l10n.secondsShort(val.round()),
-                      onChanged: (v) => setLocal(() => val = v),
-                      onChangeEnd: (v) async {
-                        await _prefs.setMegaSkipSeconds(v.round());
-                        if (mounted) setState(() {});
-                      },
-                    ),
-                  ),
-                ),
-                Text('${PlaybackPrefs.megaSkipMax}', style: AppText.caption),
-              ],
+            SizedBox(
+              width: 44,
+              child: Text(
+                '${val.round()}s',
+                style: AppText.caption.copyWith(color: AppColors.textSecondary),
+                textAlign: TextAlign.end,
+              ),
             ),
           ],
         ),
@@ -615,542 +567,161 @@ class _PlaybackSettingsScreenState extends State<PlaybackSettingsScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = context.l10n;
+    final isTv = sl<AppMode>().isTv;
+
     return Scaffold(
-      backgroundColor: AppColors.bg,
-      appBar: settingsAppBar(context.l10n.playback),
+      backgroundColor: AppColors.background,
+      appBar: AppBar(
+        title: Text(l10n.playback),
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+      ),
       body: ListView(
-        // TV focus chrome paints outside the row, so it must not be clipped.
-        // Phone has no focus ring — keep the normal clip so rows don't bleed
-        // past the list edge while scrolling.
-        clipBehavior: sl<AppMode>().isTv ? Clip.none : Clip.hardEdge,
-        padding: const EdgeInsets.only(top: 4, bottom: 28),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
         children: [
-          // ── Quality & audio ─────────────────────────────────────────────
-          SettingsSectionLabel(context.l10n.qualityAndAudio),
           SettingsCard(
+            title: l10n.player,
             children: [
+              // Default Player picker available everywhere (TV & Phone)
               SettingsTile(
-                autofocus: true,
-                icon: Icons.high_quality_outlined,
-                title: context.l10n.defaultQuality,
-                subtitle: _labelFor(_qualityOptions, _prefs.defaultQuality, _prefs.defaultQuality),
-                onTap: _pickQuality,
+                icon: Icons.play_circle_outline,
+                title: l10n.defaultPlayer,
+                subtitle: _prefs.externalPlayerName.isEmpty
+                    ? l10n.builtInPlayer
+                    : _prefs.externalPlayerName,
+                onTap: _pickPlayer,
               ),
-              SettingsTile(
-                icon: Icons.translate_rounded,
-                title: context.l10n.defaultAudioAnimeSubDub,
-                subtitle: _labelFor(_audioOptions, _prefs.defaultCategory, _prefs.defaultCategory),
-                onTap: _pickAudio,
-              ),
-              SettingsTile(
-                icon: Icons.speed_outlined,
-                title: context.l10n.defaultSpeed,
-                subtitle: _labelFor(_speedOptions, _prefs.defaultSpeed, '${_prefs.defaultSpeed}x'),
-                onTap: _pickSpeed,
-              ),
-              // Video decoder + Anime4K are mpv-renderer-only — the native TV
-              // player (ExoPlayer) ignores them, so hide them on TV.
-              if (!sl<AppMode>().isTv)
-                SettingsTile(
-                  icon: Icons.memory_outlined,
-                  title: context.l10n.videoDecoder,
-                  subtitle: _labelFor(videoDecoderOptions(context.l10n), _prefs.videoDecoder, context.l10n.decoderHardwareRecommended),
-                  onTap: _pickDecoder,
-                ),
-              // Escape hatch for black video with working audio — see
-              // _rendererOptions. Takes effect on the next player open (mpv
-              // can't swap its video output on a live player).
-              if (!sl<AppMode>().isTv)
-                SettingsTile(
-                  icon: Icons.display_settings_outlined,
-                  title: context.l10n.videoRenderer,
-                  subtitle: _labelFor(videoRendererOptions(context.l10n), _prefs.videoOutput, context.l10n.rendererAutoRecommended),
-                  onTap: _pickRenderer,
-                ),
-              // Anime4K GLSL upscaling — downloaded on demand. One row = Off /
-              // Mid / High (GPU tier). Anime-tuned; may over-sharpen live action.
-              if (!sl<AppMode>().isTv)
-                SettingsTile(
-                  icon: Icons.auto_awesome_outlined,
-                  title: context.l10n.anime4kEnhancement,
-                  subtitle: _shaderDownloading
-                      ? context.l10n.downloadingPercent((_shaderProgress * 100).round())
-                      : (!_shadersReady
-                            ? context.l10n.tapToDownloadShaders
-                            : shaderStylePickerLabel(context.l10n, _prefs.videoShaderStyle)),
-                  trailing: _shaderDownloading
-                      ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
-                      : null,
-                  onTap: _shaderDownloading ? null : (!_shadersReady ? _downloadShaders : _pickShaderStyle),
-                ),
-              if (!sl<AppMode>().isTv && _shadersReady && _prefs.videoShaderStyle != 'off')
-                SettingsTile(
-                  icon: Icons.speed_outlined,
-                  title: context.l10n.anime4kGPUTier,
-                  subtitle: shaderTierPickerLabel(context.l10n, _prefs.videoShaderTier),
-                  onTap: _pickShaderTier,
-                ),
-            ],
-          ),
 
-          // ── Player (external app handoff — Android) ─────────────────────
-          // External-player handoff is phone-only; the TV plays in its own
-          // native player, so hide this whole section on TV.
-          if (Platform.isAndroid && !sl<AppMode>().isTv) ...[
-            SettingsSectionLabel(context.l10n.sectionPlayer),
-            SettingsCard(
-              children: [
-                SettingsTile(
-                  icon: Icons.smart_display_outlined,
-                  title: context.l10n.defaultPlayer,
-                  subtitle: _prefs.externalPlayerPackage == PlaybackPrefs.androidPlayerId
-                      ? context.l10n.androidPlayer
-                      : _prefs.externalPlayerPackage.isEmpty
-                          ? context.l10n.builtIn
-                          : (_prefs.externalPlayerLabel.isNotEmpty ? _prefs.externalPlayerLabel : context.l10n.externalApp),
-                  onTap: _pickPlayer,
-                ),
-                SettingsTile(
-                  icon: Icons.tune_rounded,
-                  title: context.l10n.playerControls,
-                  subtitle: context.l10n.reorderOrHideTheButtonsOnThePlayerBar,
-                  onTap: () async {
-                    await Navigator.of(
-                      context,
-                    ).push(MaterialPageRoute<void>(builder: (_) => const PlayerControlsScreen()));
-                    if (mounted) setState(() {});
-                  },
-                ),
-              ],
-            ),
-          ],
-
-          // ── Playback behaviour ──────────────────────────────────────────
-          SettingsSectionLabel(context.l10n.playback),
-          SettingsCard(
-            children: [
-              _toggleRow(
-                icon: Icons.history_outlined,
-                title: context.l10n.resumePlayback,
-                subtitle: context.l10n.continueFromWhereYouLeftOff,
-                value: _prefs.autoResume,
-                onChanged: (v) async {
-                  await _prefs.setAutoResume(v);
-                  if (mounted) setState(() {});
-                },
-              ),
-              _toggleRow(
-                icon: Icons.visibility_outlined,
-                title: context.l10n.askBeforeJumping,
-                subtitle: context.l10n.askBeforeJumpingSubtitle,
-                value: _prefs.askOnJump,
-                onChanged: (v) async {
-                  await _prefs.setAskOnJump(v);
-                  if (mounted) setState(() {});
-                },
-              ),
-              _toggleRow(
-                icon: Icons.playlist_add_check_rounded,
-                title: context.l10n.autoAddToMyList,
-                subtitle: context.l10n.addATitleToMyListWhenYouStartWatchingIt,
-                value: _prefs.autoAddToMyList,
-                onChanged: (v) async {
-                  await _prefs.setAutoAddToMyList(v);
-                  if (mounted) setState(() {});
-                },
-              ),
-              _toggleRow(
-                icon: Icons.sync_rounded,
-                title: context.l10n.autoTrack,
-                subtitle: context.l10n.autoTrackSubtitle,
-                value: _prefs.autoTrack,
-                onChanged: (v) async {
-                  await _prefs.setAutoTrack(v);
-                  if (mounted) setState(() {});
-                },
-              ),
-              SettingsTile(
-                icon: Icons.exit_to_app_outlined,
-                title: context.l10n.closeConfirmation,
-                subtitle: switch (_prefs.closeConfirmation) {
-                  'confirm' => context.l10n.closeConfirmationAsk,
-                  'direct' => context.l10n.closeConfirmationDirect,
-                  _ => context.l10n.closeConfirmationDoubleBack,
-                },
-                onTap: _pickCloseConfirmation,
-              ),
-              _toggleRow(
-                icon: Icons.skip_next_outlined,
-                title: context.l10n.autoplayNextEpisode,
-                value: _prefs.autoplayNext,
-                onChanged: (v) async {
-                  await _prefs.setAutoplayNext(v);
-                  if (mounted) setState(() {});
-                },
-              ),
-              _toggleRow(
-                icon: Icons.fast_forward_outlined,
-                title: context.l10n.autoSkipFillerEpisodes,
-                subtitle: context.l10n.autoSkipFillerSubtitle,
-                value: _prefs.autoSkipFiller,
-                onChanged: (v) async {
-                  await _prefs.setAutoSkipFiller(v);
-                  if (mounted) setState(() {});
-                },
-              ),
-              _toggleRow(
-                icon: Icons.movie_outlined,
-                title: context.l10n.autoplayTrailer,
-                subtitle: context.l10n.playATitleSTrailerOnItsDetailPage,
-                value: _prefs.autoplayTrailer,
-                onChanged: (v) async {
-                  await _prefs.setAutoplayTrailer(v);
-                  if (mounted) setState(() {});
-                },
-              ),
-              _toggleRow(
-                icon: Icons.high_quality_outlined,
-                title: context.l10n.playTrailersInHD,
-                subtitle: context.l10n.playTrailersInHDSubtitle,
-                value: _prefs.trailerHd,
-                onChanged: (v) async {
-                  await _prefs.setTrailerHd(v);
-                  if (mounted) setState(() {});
-                },
-              ),
-              _toggleRow(
-                icon: Icons.fast_forward_outlined,
-                title: context.l10n.skipIntroButton,
-                subtitle: context.l10n.showSkipOpeningEndingOnAnimeWhenDetected,
-                value: _prefs.skipIntro,
-                onChanged: (v) async {
-                  await _prefs.setSkipIntro(v);
-                  if (mounted) setState(() {});
-                },
-              ),
-              _toggleRow(
-                icon: Icons.fast_forward_rounded,
-                title: context.l10n.autoSkipOpening,
-                subtitle: context.l10n.jumpPastTheOPOnItsOwnNoTap,
-                value: _prefs.autoSkipOp,
-                onChanged: (v) async {
-                  await _prefs.setAutoSkipOp(v);
-                  if (mounted) setState(() {});
-                },
-              ),
-              _toggleRow(
-                icon: Icons.fast_forward_rounded,
-                title: context.l10n.autoSkipRecap,
-                subtitle: context.l10n.jumpPastThePreviouslyOnRecapNoTap,
-                value: _prefs.autoSkipRecap,
-                onChanged: (v) async {
-                  await _prefs.setAutoSkipRecap(v);
-                  if (mounted) setState(() {});
-                },
-              ),
-              _toggleRow(
-                icon: Icons.fast_forward_rounded,
-                title: context.l10n.autoSkipEnding,
-                subtitle: context.l10n.jumpPastTheEDOnItsOwnNoTap,
-                value: _prefs.autoSkipEd,
-                onChanged: (v) async {
-                  await _prefs.setAutoSkipEd(v);
-                  if (mounted) setState(() {});
-                },
-              ),
-              _toggleRow(
-                icon: Icons.keyboard_double_arrow_right_rounded,
-                title: context.l10n.megaskipButton,
-                subtitle: context.l10n.aJumpForwardButtonInThePlayerAnyVideo,
-                value: _prefs.megaSkip,
-                onChanged: (v) async {
-                  await _prefs.setMegaSkip(v);
-                  if (mounted) setState(() {});
-                },
-              ),
-              // On TV the inline slider traps D-pad focus (↑/↓ change the value
-              // instead of moving on), so use a picker row there instead.
-              if (_prefs.megaSkip)
-                sl<AppMode>().isTv
-                    ? SettingsTile(
-                        icon: Icons.timer_outlined,
-                        title: context.l10n.megaSkipDuration,
-                        subtitle: context.l10n.secondsShort(_prefs.megaSkipSeconds),
-                        onTap: _pickMegaSkipDuration,
-                      )
-                    : _megaSkipDurationRow(),
-              if(sl<AppMode>().isTv && !isAppleTv)
+              if (isTv) ...[
                 _toggleRow(
-                  icon: Icons.forward_10,
-                  title: context.l10n.seekButton,
-                  subtitle: context.l10n.seekButtonDescription,
-                  value: _prefs.seekButtons,
-                  onChanged: (v) async {
-                    await _prefs.setSeekButtons(v);
-                    if (mounted) setState(() {});
-                  },
-                ),
-              if(_prefs.seekButtons)
-                SettingsTile(
-                  icon: Icons.timer_outlined,
-                  title: context.l10n.seekButtonDuration,
-                  subtitle: context.l10n.secondsShort(_prefs.tvSeekSeconds),
-                  onTap: _pickSeekSecondsForTV,
-                ), 
-              _toggleRow(
-                icon: Icons.screen_lock_portrait_outlined,
-                title: context.l10n.keepScreenOn,
-                value: _prefs.keepScreenOn,
-                onChanged: (v) async {
-                  await _prefs.setKeepScreenOn(v);
-                  if (mounted) setState(() {});
-                },
-              ),
-              if (sl<AppMode>().isTv && !isAppleTv)
-                _toggleRow(
-                  icon: Icons.tv_outlined,
-                  title: context.l10n.nativeTVPlayer,
-                  subtitle: context.l10n.nativeTvPlayerSubtitle,
+                  icon: Icons.tv,
+                  title: l10n.nativeTvPlayer,
+                  subtitle: l10n.nativeTvPlayerDescription,
                   value: _prefs.nativeTvPlayer,
                   onChanged: (v) async {
                     await _prefs.setNativeTvPlayer(v);
                     if (mounted) setState(() {});
                   },
                 ),
-              if (sl<AppMode>().isTv && !isAppleTv && _prefs.nativeTvPlayer)
                 SettingsTile(
-                  icon: Icons.surround_sound_outlined,
-                  title: context.l10n.tvDecoderMode,
-                  subtitle: _tvDecoderModeLabel(
-                    _prefs.tvDecoderMode,
-                    context.l10n,
-                  ),
+                  icon: Icons.developer_board,
+                  title: l10n.tvDecoderMode,
+                  subtitle: _tvDecoderModeLabel(_prefs.tvDecoderMode, l10n),
                   onTap: _pickTvDecoderMode,
                 ),
-              // Seek preview (online) removed — the streaming engine was flaky
-              // and re-downloaded video just for thumbnails. Download-file
-              // previews still work (instant + free), so no toggle is needed.
-              /*
-              _toggleRow(
-                icon: Icons.image_outlined,
-                title: 'Seek preview (online)',
-                subtitle: 'Thumbnails while scrubbing streams — costs extra data',
-                value: _prefs.seekPreviewOnline,
-                onChanged: (v) async {
-                  await _prefs.setSeekPreviewOnline(v);
-                  if (mounted) setState(() {});
-                },
-              ),
-              */
-              if (Platform.isAndroid && !sl<AppMode>().isTv)
-                _toggleRow(
-                  icon: Icons.picture_in_picture_alt_outlined,
-                  title: context.l10n.autoPictureInPicture,
-                  subtitle: context.l10n.shrinkToAFloatingWindowWhenYouLeaveTheApp,
-                  value: _prefs.autoPip,
-                  onChanged: (v) async {
-                    await _prefs.setAutoPip(v);
-                    if (mounted) setState(() {});
-                  },
+              ],
+
+              if (!isTv) ...[
+                SettingsTile(
+                  icon: Icons.videocam_outlined,
+                  title: l10n.videoDecoder,
+                  subtitle: _labelFor(videoDecoderOptions(l10n), _prefs.videoDecoder, _prefs.videoDecoder),
+                  onTap: _pickDecoder,
                 ),
+                SettingsTile(
+                  icon: Icons.brush_outlined,
+                  title: l10n.videoRenderer,
+                  subtitle: _labelFor(videoRendererOptions(l10n), _prefs.videoOutput, _prefs.videoOutput),
+                  onTap: _pickRenderer,
+                ),
+              ],
+
               SettingsTile(
-                icon: Icons.info_outline_rounded,
-                title: context.l10n.playerInfoOverlay,
-                subtitle: _prefs.playerInfoFields.isEmpty
-                    ? context.l10n.playerInfoOff
-                    : context.l10n.playerInfoFieldsCount(_prefs.playerInfoFields.length),
-                onTap: _pickPlayerInfo,
-              ),
-              _toggleRow(
                 icon: Icons.high_quality_outlined,
-                title: context.l10n.showQualityLabel,
-                subtitle: context.l10n.plainQualityTextEG1080pOnTheTopBarRight,
-                value: _prefs.alwaysShowQuality,
-                onChanged: (v) async {
-                  await _prefs.setAlwaysShowQuality(v);
-                  if (mounted) setState(() {});
-                  },
-                ),
+                title: l10n.defaultQuality,
+                subtitle: _labelFor(_qualityOptions, _prefs.defaultQuality, _prefs.defaultQuality),
+                onTap: _pickQuality,
+              ),
+              SettingsTile(
+                icon: Icons.audiotrack_outlined,
+                title: l10n.defaultAudio,
+                subtitle: _labelFor(_audioOptions, _prefs.defaultCategory, _prefs.defaultCategory),
+                onTap: _pickAudio,
+              ),
+              SettingsTile(
+                icon: Icons.speed_outlined,
+                title: l10n.defaultSpeed,
+                subtitle: _labelFor(_speedOptions, _prefs.defaultSpeed, '${_prefs.defaultSpeed}x'),
+                onTap: _pickSpeed,
+              ),
             ],
           ),
-
-          // ── Gestures (touch-only — hidden on TV) ────────────────────────
-          if (!sl<AppMode>().isTv) ...[
-            SettingsSectionLabel(context.l10n.sectionGestures),
-            SettingsCard(
-              children: [
+          const SizedBox(height: 16),
+          SettingsCard(
+            title: l10n.controls,
+            children: [
+              if (isTv)
                 SettingsTile(
-                  icon: Icons.touch_app_outlined,
-                  title: context.l10n.doubleTapSkip,
+                  icon: Icons.timer_outlined,
+                  title: l10n.seekButtonDuration,
+                  subtitle: _labelFor(_skipOptions, _prefs.tvSeekSeconds, '${_prefs.tvSeekSeconds}s'),
+                  onTap: _pickSeekSecondsForTV,
+                )
+              else
+                SettingsTile(
+                  icon: Icons.timer_outlined,
+                  title: l10n.doubleTapSkip,
                   subtitle: _labelFor(_skipOptions, _prefs.doubleTapSeconds, '${_prefs.doubleTapSeconds}s'),
                   onTap: _pickSkip,
                 ),
-                _toggleRow(
-                  icon: Icons.swipe_outlined,
-                  title: context.l10n.gestureControls,
-                  subtitle: context.l10n.swipeLeftForBrightnessRightForVolume,
-                  value: _prefs.gestureControls,
-                  onChanged: (v) async {
-                    await _prefs.setGestureControls(v);
-                    if (mounted) setState(() {});
-                  },
-                ),
-                _toggleRow(
-                  icon: Icons.swap_horiz_rounded,
-                  title: context.l10n.swipeToSeek,
-                  subtitle: context.l10n.dragLeftOrRightAcrossTheVideoToScrub,
-                  value: _prefs.swipeSeek,
-                  onChanged: (v) async {
-                    await _prefs.setSwipeSeek(v);
-                    if (mounted) setState(() {});
-                  },
-                ),
-                _toggleRow(
-                  icon: Icons.fast_forward_rounded,
-                  title: context.l10n.holdFor2Speed,
-                  subtitle: context.l10n.longPressTheVideoToPlayAt2WhileHeld,
-                  value: _prefs.holdSpeed,
-                  onChanged: (v) async {
-                    await _prefs.setHoldSpeed(v);
-                    if (mounted) setState(() {});
-                  },
-                ),
-              ],
-            ),
-          ],
-
-          // ── Cache (buffering + clear) ───────────────────────────────────
-          SettingsSectionLabel(context.l10n.sectionCache),
+              _toggleRow(
+                icon: Icons.screen_lock_portrait_outlined,
+                title: l10n.keepScreenOn,
+                value: _prefs.keepScreenOn,
+                onChanged: (v) async {
+                  await _prefs.setKeepScreenOn(v);
+                  if (mounted) setState(() {});
+                },
+              ),
+              _toggleRow(
+                icon: Icons.info_outline,
+                title: l10n.playerInfoOverlay,
+                value: _prefs.playerInfoOverlay,
+                onChanged: (v) async {
+                  await _prefs.setPlayerInfoOverlay(v);
+                  if (mounted) setState(() {});
+                },
+              ),
+              _toggleRow(
+                icon: Icons.label_outline,
+                title: l10n.showQualityLabel,
+                subtitle: l10n.showQualityLabelSubtitle,
+                value: _prefs.showQualityLabel,
+                onChanged: (v) async {
+                  await _prefs.setShowQualityLabel(v);
+                  if (mounted) setState(() {});
+                },
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
           SettingsCard(
+            title: l10n.cache,
             children: [
               SettingsTile(
-                icon: Icons.memory_rounded,
-                title: context.l10n.videoBufferSize,
-                subtitle: _labelFor(_bufferSizeOptions(context.l10n), _prefs.videoBufferSize, context.l10n.bufferSizeDefault),
+                icon: Icons.sd_card_alert_outlined,
+                title: l10n.videoBufferSize,
+                subtitle: _labelFor(_bufferSizeOptions(l10n), _prefs.videoBufferSize, _prefs.videoBufferSize),
                 onTap: _pickBufferSize,
               ),
               SettingsTile(
-                icon: Icons.timelapse_rounded,
-                title: context.l10n.videoBufferLength,
-                subtitle: _labelFor(_bufferLengthOptions(context.l10n), _prefs.videoBufferLength, context.l10n.bufferLengthDefault),
+                icon: Icons.straighten_outlined,
+                title: l10n.videoBufferLength,
+                subtitle: _labelFor(_bufferLengthOptions(l10n), _prefs.videoBufferLength, _prefs.videoBufferLength),
                 onTap: _pickBufferLength,
               ),
               SettingsTile(
-                icon: Icons.delete_outline_rounded,
-                title: context.l10n.clearImageVideoCache,
+                icon: Icons.delete_outline,
+                title: l10n.clearVideoCache,
                 subtitle: MediaCache.formatBytes(_cacheBytes),
                 onTap: _clearCache,
               ),
             ],
           ),
-
-          // ── Subtitles ───────────────────────────────────────────────────
-          SettingsSectionLabel(context.l10n.subtitles),
-          SettingsCard(
-            children: [
-              // libass is the mpv renderer's .ass styling — the native TV
-              // player styles subtitles via ExoPlayer instead, so hide on TV.
-              if (!sl<AppMode>().isTv)
-                _toggleRow(
-                  icon: Icons.subtitles_outlined,
-                  title: context.l10n.styledSubtitlesLibass,
-                  subtitle: context.l10n.styledSubtitlesLibassSubtitlePlayback,
-                  value: _prefs.styledSubtitles,
-                  onChanged: (v) async {
-                    await _prefs.setStyledSubtitles(v);
-                    if (mounted) setState(() {});
-                  },
-                ),
-              SettingsTile(
-                icon: Icons.text_fields_rounded,
-                title: context.l10n.subtitleStyle,
-                subtitle: context.l10n.subtitleStyleSubtitle,
-                onTap: () => openSubtitleStyleSheet(context, null, () {
-                  if (mounted) setState(() {});
-                }),
-              ),
-              SettingsTile(
-                icon: Icons.vpn_key_outlined,
-                title: context.l10n.opensubtitlesAPIKey,
-                subtitle: _prefs.subtitleApiKey.trim().isEmpty
-                    ? context.l10n.requiredForOnlineSubtitleSearch
-                    : context.l10n.keySavedOnlineSearchEnabled,
-                onTap: _editSubtitleApiKey,
-              ),
-              SettingsTile(
-                icon: Icons.language_outlined,
-                title: context.l10n.subtitleLanguage,
-                subtitle: () {
-                  final p = _prefs.subtitlePreference;
-                  if (p.isEmpty) return context.l10n.auto;
-                  if (p == 'off') return context.l10n.off;
-                  return languageByPref(p)?.name ?? p.toUpperCase();
-                }(),
-                onTap: _pickSubtitleLanguage,
-              ),
-              _toggleRow(
-                icon: Icons.download_outlined,
-                title: context.l10n.autoDownloadSubtitles,
-                subtitle: context.l10n.whenTheSourceHasNoSubtitleInYourLanguage,
-                value: _prefs.autoDownloadSubtitles,
-                onChanged: (v) async {
-                  await _prefs.setAutoDownloadSubtitles(v);
-                  if (mounted) setState(() {});
-                },
-              ),
-              _toggleRow(
-                icon: Icons.translate_outlined,
-                title: context.l10n.autoTranslateSubtitles,
-                subtitle: context.l10n.translateToYourLanguageOnPlayWhenTheSourceHasNone,
-                value: _prefs.autoTranslateSubtitles,
-                onChanged: (v) async {
-                  await _prefs.setAutoTranslateSubtitles(v);
-                  if (mounted) setState(() {});
-                },
-              ),
-              if (_prefs.autoTranslateSubtitles)
-                SettingsTile(
-                  icon: Icons.g_translate_outlined,
-                  title: context.l10n.translateSubtitlesTo,
-                  subtitle: _prefs.translateSubtitleTo.isEmpty
-                      ? context.l10n.pickALanguage
-                      : (languageByPref(_prefs.translateSubtitleTo)?.name ?? _prefs.translateSubtitleTo.toUpperCase()),
-                  onTap: _pickTranslateLanguage,
-                ),
-            ],
-          ),
+          const SizedBox(height: 24),
         ],
       ),
     );
-  }
-
-  Future<void> _pickTranslateLanguage() async {
-    final picked = await _pick<String>(
-      title: context.l10n.translateSubtitlesTo,
-      options: [for (final l in kSubtitleLanguages) (l.iso1, l.name)],
-      current: _prefs.translateSubtitleTo,
-    );
-    if (picked == null) return;
-    await _prefs.setTranslateSubtitleTo(picked);
-    if (mounted) setState(() {});
-  }
-
-  Future<void> _pickSubtitleLanguage() async {
-    final picked = await showSubtitleLanguagePicker(context, _prefs.subtitlePreference);
-    if (picked == null) return; // dismissed
-    await _prefs.setSubtitlePreference(picked);
-    if (mounted) setState(() {});
-  }
-
-  /// Prompts for the OpenSubtitles API key and saves it to [PlaybackPrefs].
-  /// A free key is created at opensubtitles.com → Consumers.
-  Future<void> _editSubtitleApiKey() async {
-    final key = await showDialog<String>(
-      context: context,
-      builder: (_) => _ApiKeyDialog(initial: _prefs.subtitleApiKey),
-    );
-    if (key == null) return; // dismissed
-    await _prefs.setSubtitleApiKey(key.trim());
-    if (mounted) setState(() {});
   }
 }
