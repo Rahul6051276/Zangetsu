@@ -7,6 +7,7 @@ import 'package:supabase_flutter/supabase_flutter.dart' show PostgrestClient;
 import '../hive/safe_box.dart';
 import '../supabase/cloud_postgrest.dart';
 import '../supabase/supabase_service.dart';
+import '../theme/theme_controller.dart';
 import 'profile_scope.dart';
 
 export 'profile_scope.dart' show kDefaultProfileId;
@@ -18,6 +19,9 @@ class ViewerProfile {
     this.avatar = 0,
     this.isKids = false,
     this.photoUrl,
+    this.accentColor,
+    this.materialYou,
+    this.amoled,
   });
 
   final String id;
@@ -25,6 +29,9 @@ class ViewerProfile {
   final int avatar;
   final bool isKids;
   final String? photoUrl;
+  final int? accentColor;
+  final bool? materialYou;
+  final bool? amoled;
 
   bool get isDefault => id == kDefaultProfileId;
 
@@ -34,6 +41,9 @@ class ViewerProfile {
     'avatar': avatar,
     'isKids': isKids,
     'photoUrl': photoUrl,
+    'accentColor': accentColor,
+    'materialYou': materialYou,
+    'amoled': amoled,
   };
 
   factory ViewerProfile.fromJson(Map<String, dynamic> json) => ViewerProfile(
@@ -42,6 +52,9 @@ class ViewerProfile {
     avatar: (json['avatar'] as num?)?.toInt() ?? 0,
     isKids: json['isKids'] == true,
     photoUrl: json['photoUrl'] as String?,
+    accentColor: (json['accentColor'] as num?)?.toInt(),
+    materialYou: json['materialYou'] as bool?,
+    amoled: json['amoled'] as bool?,
   );
 
   ViewerProfile copyWith({
@@ -49,6 +62,9 @@ class ViewerProfile {
     int? avatar,
     bool? isKids,
     String? photoUrl,
+    int? accentColor,
+    bool? materialYou,
+    bool? amoled,
     bool clearPhotoUrl = false,
   }) => ViewerProfile(
     id: id,
@@ -56,6 +72,9 @@ class ViewerProfile {
     avatar: avatar ?? this.avatar,
     isKids: isKids ?? this.isKids,
     photoUrl: clearPhotoUrl ? null : photoUrl ?? this.photoUrl,
+    accentColor: accentColor ?? this.accentColor,
+    materialYou: materialYou ?? this.materialYou,
+    amoled: amoled ?? this.amoled,
   );
 }
 
@@ -89,6 +108,9 @@ class ViewerProfileRemote {
       'avatar': profile.avatar,
       'is_kids': profile.isKids,
       'photo_url': profile.photoUrl,
+      'accent_color': profile.accentColor,
+      'material_you': profile.materialYou,
+      'amoled': profile.amoled,
     });
   }
 
@@ -290,6 +312,7 @@ class ViewerProfileStore {
         next.where((p) => p.id == storedId).firstOrNull ??
         next.firstWhere((p) => p.id == kDefaultProfileId);
     active.value = chosen;
+    await _applyTheme(chosen);
     revision.value++;
   }
 
@@ -392,9 +415,36 @@ class ViewerProfileStore {
     return synced;
   }
 
+  Future<bool> updateTheme(
+    String profileId, {
+    int? accentColor,
+    bool? materialYou,
+    bool? amoled,
+  }) async {
+    final index = _profiles.indexWhere((profile) => profile.id == profileId);
+    if (index < 0) return false;
+    final profile = _profiles[index].copyWith(
+      accentColor: accentColor,
+      materialYou: materialYou,
+      amoled: amoled,
+    );
+    _profiles = [
+      for (var i = 0; i < _profiles.length; i++)
+        if (i == index) profile else _profiles[i],
+    ];
+    await _saveLocal(_loadedOwner ?? _owner);
+    if (activeId == profileId) {
+      active.value = profile;
+      await _applyTheme(profile);
+    }
+    revision.value++;
+    return _saveRemote(profile);
+  }
+
   Future<void> switchTo(String profileId) async {
     final profile = _profiles.where((p) => p.id == profileId).firstOrNull;
     if (profile == null || profile.id == activeId) return;
+    await _applyTheme(profile);
     active.value = profile;
     await _box.put(_activeKey(_loadedOwner ?? _owner), profile.id);
     revision.value++;
@@ -477,7 +527,17 @@ class ViewerProfileStore {
     avatar: (row['avatar'] as num?)?.toInt() ?? 0,
     isKids: row['is_kids'] == true,
     photoUrl: row['photo_url'] as String?,
+    accentColor: (row['accent_color'] as num?)?.toInt(),
+    materialYou: row['material_you'] as bool?,
+    amoled: row['amoled'] as bool?,
   );
+
+  Future<void> _applyTheme(ViewerProfile profile) =>
+      ThemeController.applyProfileTheme(
+        accentColor: profile.accentColor,
+        materialYou: profile.materialYou,
+        amoled: profile.amoled,
+      );
 
   List<ViewerProfile> _readLocal(String owner) =>
       _readProfiles(_profilesKey(owner));

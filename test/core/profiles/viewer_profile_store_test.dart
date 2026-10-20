@@ -4,6 +4,8 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hive/hive.dart';
 import 'package:watch_app/core/profiles/viewer_profile.dart';
+import 'package:watch_app/core/theme/app_colors.dart';
+import 'package:watch_app/core/theme/theme_controller.dart';
 
 void main() {
   late Directory directory;
@@ -13,6 +15,15 @@ void main() {
     directory = await Directory.systemTemp.createTemp('viewer_profiles');
     Hive.init(directory.path);
     await ViewerProfileStore.init();
+    await ThemeController.init();
+    await ThemeController.setAccent(AppColors.defaultAccent);
+    await ThemeController.setMaterialYou(false);
+    await ThemeController.setAmoled(false);
+    await ThemeController.applyProfileTheme(
+      accentColor: null,
+      materialYou: null,
+      amoled: null,
+    );
     store = ViewerProfileStore();
     await store.loadForUser(displayName: 'Account');
   });
@@ -119,6 +130,99 @@ void main() {
     expect(store.adultMetadataAllowed, isTrue);
     expect(await store.delete(kDefaultProfileId), isFalse);
   });
+
+  test(
+    'appearance theme follows the profile and syncs across reloads',
+    () async {
+      final remote = _MemoryProfileRemote();
+      final cloudStore = ViewerProfileStore(
+        remote: remote,
+        currentUserId: () => 'test-user',
+      );
+      await cloudStore.loadForUser();
+      final guest = (await cloudStore.create('Guest'))!;
+      final blue = ThemeController.accentPresets[1].$2;
+      final violet = ThemeController.accentPresets[2].$2;
+
+      await cloudStore.updateTheme(
+        kDefaultProfileId,
+        accentColor: blue.toARGB32(),
+        materialYou: false,
+        amoled: true,
+      );
+      await cloudStore.updateTheme(
+        guest.id,
+        accentColor: violet.toARGB32(),
+        materialYou: true,
+        amoled: false,
+      );
+
+      await cloudStore.switchTo(guest.id);
+      expect(ThemeController.accent, violet);
+      // Keep the Android choice in cloud, but never lock the picker on other OSes.
+      expect(cloudStore.activeProfile.materialYou, isTrue);
+      expect(ThemeController.materialYou, isFalse);
+      expect(ThemeController.amoled, isFalse);
+      expect(AppColors.bg, AppColors.defaultBg);
+
+      await cloudStore.switchTo(kDefaultProfileId);
+      expect(ThemeController.accent, blue);
+      expect(ThemeController.materialYou, isFalse);
+      expect(ThemeController.amoled, isTrue);
+      expect(AppColors.bg, ThemeController.amoledBg);
+      expect(Hive.box(ThemeController.boxName).get('amoled'), isFalse);
+
+      final reloaded = ViewerProfileStore(
+        remote: remote,
+        currentUserId: () => 'test-user',
+      );
+      await reloaded.loadForUser();
+      expect(reloaded.activeProfile.accentColor, blue.toARGB32());
+      expect(reloaded.activeProfile.amoled, isTrue);
+      expect(ThemeController.accent, blue);
+      expect(AppColors.bg, ThemeController.amoledBg);
+    },
+  );
+
+  test(
+    'appearance changes remain local while profile sync is offline',
+    () async {
+      final remote = _MemoryProfileRemote();
+      final cloudStore = ViewerProfileStore(
+        remote: remote,
+        currentUserId: () => 'test-user',
+      );
+      await cloudStore.loadForUser();
+      remote.offline = true;
+      final violet = ThemeController.accentPresets[2].$2;
+
+      expect(
+        await cloudStore.updateTheme(
+          kDefaultProfileId,
+          accentColor: violet.toARGB32(),
+          materialYou: false,
+          amoled: true,
+        ),
+        isFalse,
+      );
+      expect(ThemeController.accent, violet);
+      expect(AppColors.bg, ThemeController.amoledBg);
+      expect(cloudStore.activeProfile.accentColor, violet.toARGB32());
+
+      remote.offline = false;
+      final resumedStore = ViewerProfileStore(
+        remote: remote,
+        currentUserId: () => 'test-user',
+      );
+      await resumedStore.loadForUser();
+      expect(remote.rows[kDefaultProfileId]?.accentColor, violet.toARGB32());
+      expect(remote.rows[kDefaultProfileId]?.amoled, isTrue);
+      expect(
+        Hive.box(ViewerProfileStore.boxName).get('pending:test-user'),
+        isEmpty,
+      );
+    },
+  );
 
   test(
     'ignores a profile response after the signed-in account changes',
@@ -529,7 +633,17 @@ class _MemoryProfileRemote implements ViewerProfileRemote {
 
   @override
   Future<List<Map<String, dynamic>>> listFor(String userId) async => [
-    for (final p in rows.values) {'profile_id': p.id, ...p.toJson()},
+    for (final p in rows.values)
+      {
+        'profile_id': p.id,
+        'name': p.name,
+        'avatar': p.avatar,
+        'is_kids': p.isKids,
+        'photo_url': p.photoUrl,
+        'accent_color': p.accentColor,
+        'material_you': p.materialYou,
+        'amoled': p.amoled,
+      },
   ];
 
   @override

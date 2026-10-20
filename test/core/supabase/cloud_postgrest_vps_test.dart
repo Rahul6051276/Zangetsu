@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -17,11 +18,13 @@ void main() {
   late PostgrestClient client;
   late List<String?> authorizations;
   late List<String> paths;
+  late List<Map<String, dynamic>> requestBodies;
   String? token;
 
   setUp(() async {
     authorizations = [];
     paths = [];
+    requestBodies = [];
     token = 'first-token';
     server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     server.listen((request) async {
@@ -29,7 +32,10 @@ void main() {
         request.headers.value(HttpHeaders.authorizationHeader),
       );
       paths.add(request.uri.path);
-      await request.drain<void>();
+      final body = await utf8.decoder.bind(request).join();
+      if (body.isNotEmpty) {
+        requestBodies.add(jsonDecode(body) as Map<String, dynamic>);
+      }
       if (request.method == 'GET') {
         request.response
           ..statusCode = HttpStatus.ok
@@ -125,11 +131,20 @@ void main() {
 
     await remote.upsert(
       'user-1',
-      const ViewerProfile(id: 'profile-1', name: 'Viewer'),
+      const ViewerProfile(
+        id: 'profile-1',
+        name: 'Viewer',
+        accentColor: 0xFF4D8DFF,
+        materialYou: true,
+        amoled: false,
+      ),
     );
 
     expect(paths, ['/viewer_profiles']);
     expect(authorizations, ['Bearer first-token']);
+    expect(requestBodies.single['accent_color'], 0xFF4D8DFF);
+    expect(requestBodies.single['material_you'], isTrue);
+    expect(requestBodies.single['amoled'], isFalse);
   });
 
   test('backups route to the VPS backup table', () async {

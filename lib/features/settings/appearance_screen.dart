@@ -8,6 +8,8 @@ import '../../core/theme/app_text.dart';
 import '../../core/ui/app_toast.dart';
 import '../../core/theme/app_font_prefs.dart';
 import '../../core/theme/theme_controller.dart';
+import '../../core/di/injector.dart';
+import '../../core/profiles/viewer_profile.dart';
 import '../../l10n/l10n.dart';
 import '../../core/ui/animation_prefs.dart';
 
@@ -34,7 +36,7 @@ class _AppearanceScreenState extends State<AppearanceScreen> {
   void initState() {
     super.initState();
     ThemeController.supported().then((ok) {
-      if (mounted && ok) setState(() => _wallpaperSupported = true);
+      if (mounted) setState(() => _wallpaperSupported = ok);
     });
   }
 
@@ -79,9 +81,23 @@ class _AppearanceScreenState extends State<AppearanceScreen> {
       ),
     );
     if (result != null) {
-      await ThemeController.setAccent(result);
-      if (mounted) setState(() {});
+      await _updateProfileTheme(accentColor: result.toARGB32());
     }
+  }
+
+  Future<void> _updateProfileTheme({
+    int? accentColor,
+    bool? materialYou,
+    bool? amoled,
+  }) async {
+    final profiles = sl<ViewerProfileStore>();
+    await profiles.updateTheme(
+      profiles.activeId,
+      accentColor: accentColor,
+      materialYou: materialYou,
+      amoled: amoled,
+    );
+    if (mounted) setState(() {});
   }
 
   @override
@@ -133,8 +149,7 @@ class _AppearanceScreenState extends State<AppearanceScreen> {
                     isDefault: ThemeController.isDefault(color),
                     onTap: () async {
                       if (_blockedByMaterialYou()) return;
-                      await ThemeController.setAccent(color);
-                      if (mounted) setState(() {});
+                      await _updateProfileTheme(accentColor: color.toARGB32());
                     },
                   );
                 },
@@ -152,14 +167,14 @@ class _AppearanceScreenState extends State<AppearanceScreen> {
                   // Doubles as the hint that the strip above still works.
                   subtitle: context.l10n.coloursFromYourWallpaper,
                   value: ThemeController.materialYou,
-                  onChanged: ThemeController.setMaterialYou,
+                  onChanged: (value) => _updateProfileTheme(materialYou: value),
                 ),
               _switchTile(
                 icon: Icons.dark_mode_outlined,
                 title: context.l10n.pureBlackBackground,
                 subtitle: context.l10n.trueBlackForOLED,
                 value: ThemeController.amoled,
-                onChanged: ThemeController.setAmoled,
+                onChanged: (value) => _updateProfileTheme(amoled: value),
               ),
             ],
           ),
