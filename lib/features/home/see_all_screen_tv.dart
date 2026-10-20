@@ -59,10 +59,6 @@ class _SeeAllScreenTvState extends State<SeeAllScreenTv> {
   late MetaFilters _filters;
   final TextEditingController _queryController = TextEditingController();
 
-  // In-memory filter selections for when server search is absent
-  String? _selectedGenre;
-  String? _selectedYear;
-
   @override
   void initState() {
     super.initState();
@@ -177,7 +173,6 @@ class _SeeAllScreenTvState extends State<SeeAllScreenTv> {
         _showNextPage = first.hasMore;
       });
     } else {
-      // In-memory filter refresh
       setState(() {});
     }
   }
@@ -215,11 +210,11 @@ class _SeeAllScreenTvState extends State<SeeAllScreenTv> {
       if (q.isNotEmpty && !it.title.toLowerCase().contains(q)) {
         return false;
       }
-      if (_selectedGenre != null && !it.genres.contains(_selectedGenre)) {
-        return false;
-      }
-      if (_filters.year != null && it.year != null && it.year != _filters.year) {
-        return false;
+      if (_filters.genres.isNotEmpty) {
+        final matchesGenre = _filters.genres.any(
+          (g) => it.genres.any((itemGenre) => itemGenre.toLowerCase() == g.toLowerCase()),
+        );
+        if (!matchesGenre) return false;
       }
       return true;
     }).toList();
