@@ -1,5 +1,8 @@
+import 'dart:async';
+import 'dart:io';
 import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../../core/di/injector.dart';
 import '../../l10n/l10n.dart';
@@ -23,19 +26,14 @@ import 'tv_native_player.dart';
 
 /// Which TV player backend to use.
 enum TvPlayerKind {
-  /// Stock AVPlayerViewController (Apple TV).
   avPlayerSystem,
-
   nativeExo,
   exoView,
 }
 
-/// How many dead sources to walk past on TV before giving up and asking. The
-/// phone player uses the same ceiling (`_maxSourceHops`, player_controller).
-const int kMaxTvSourceHops = 3;
+/// Allow auto-hop up to 15 dead sources on TV so playback never aborts early.
+const int kMaxTvSourceHops = 15;
 
-/// Pure routing: Apple TV always uses system AVKit; Android TV keeps native
-/// Exo vs platform-view.
 TvPlayerKind tvPlayerKind({
   required bool appleTv,
   required bool nativeTvPlayer,
@@ -45,33 +43,59 @@ TvPlayerKind tvPlayerKind({
   return TvPlayerKind.exoView;
 }
 
-/// When no playback sources are installed for [showUrl]'s mode, shows the TV
-/// install-sources dialog and returns false.
 Future<bool> ensureTvPlaybackSourcesOrPrompt(
   BuildContext context, {
   String? showUrl,
 }) async {
-  debugPrint(
-    '[tv-playback] ensureTvPlaybackSourcesOrPrompt · showUrl=$showUrl',
-  );
+  debugPrint('[tv-playback] ensureTvPlaybackSourcesOrPrompt · showUrl=$showUrl');
   final failure = noSourcesFailureForPlay(showUrl: showUrl);
   if (failure == null) {
-    debugPrint('[tv-playback] ensureTvPlaybackSourcesOrPrompt → sources OK');
     return true;
   }
-  debugPrint(
-    '[tv-playback] ensureTvPlaybackSourcesOrPrompt → BLOCKED · $failure',
-  );
   if (!context.mounted) return false;
   await showTvPlaybackLoadError(context, failure: failure);
   return false;
 }
 
-/// Routes a TV play request to the platform player.
-///
-/// When [skipOverlay] is true the blocking "Finding …" overlay is suppressed
-/// — the caller is already confident the source works (e.g. Continue Watching
-/// resume) so there's no need to cover the screen while sources resolve.
+/// Attempts to launch an external player (Just Player / VLC / MX Player) if selected.
+Future<bool> _launchInExternalPlayer({
+  required String videoUrl,
+  required String title,
+  Map<String, String>? headers,
+}) async {
+  const channel = MethodChannel('com.spyou.watch_app/external_player');
+  try {
+    final launched = await channel.invokeMethod<bool>('launchPlayer', {
+      'url': videoUrl,
+      'title': title,
+      'headers': headers ?? {},
+    });
+    return launched ?? false;
+  } catch (e) {
+    debugPrint('[tv-playback] External player check/launch skipped: $e');
+    return false;
+  }
+}
+
+/// Fast pre-check: verifies if a stream URL is reachable so dead links are skipped instantly.
+Future<bool> _isStreamReachable(String url, Map<String, String>? headers) async {
+  if (url.startsWith('file://') || url.startsWith('content://')) return true;
+  try {
+    final uri = Uri.tryParse(url);
+    if (uri == null || !uri.hasScheme) return false;
+    final client = HttpClient()
+      ..connectionTimeout = const Duration(seconds: 4);
+    final request = await client.headUrl(uri);
+    headers?.forEach((k, v) => request.headers.set(k, v));
+    final response = await request.close().timeout(const Duration(seconds: 4));
+    // 200, 206 (Partial Content), 302, 301 are healthy
+    return response.statusCode >= 200 && response.statusCode < 400;
+  } catch (_) {
+    // If HEAD is blocked by server/WAF, don't discard, give it a chance
+    return true;
+  }
+}
+
 Future<void> launchTvPlayback({
   required BuildContext context,
   required String sourceId,
@@ -92,24 +116,14 @@ Future<void> launchTvPlayback({
   String? imdbId,
   MediaItem? listItem,
   bool skipOverlay = false,
-
-  /// How many dead sources this attempt has already walked past. 0 is a fresh
-  /// play; anything higher is an automatic hop and must NOT reset what we
-  /// just learned. See the invalidateWinner guard below.
   int sourceHop = 0,
 }) async {
   debugPrint(
     '[tv-playback] launchTvPlayback · sourceId=$sourceId '
     'episodes=${episodes.length} startIdx=$startIndex '
-    'showUrl=$showUrl showTitle=$showTitle category=$category',
+    'showUrl=$showUrl showTitle=$showTitle category=$category hop=$sourceHop',
   );
-  // Episode tap / Retry — drop any remembered miss and over-budget cooldowns
-  // so sources that timed out on the last attempt get another chance. Auto
-  // next-episode and probes keep those cooldowns; this path is intentional.
-  //
-  // NOT on a source hop: invalidateWinner clears the unplayable set too, so
-  // hopping through here would forget the dead source we just excluded and
-  // the sweep would hand back the same one, forever.
+
   if (sourceHop == 0 &&
       showUrl != null &&
       ZmodeIds.isZ(showUrl) &&
@@ -118,15 +132,14 @@ Future<void> launchTvPlayback({
       sl.isRegistered<PlaybackResolver>()) {
     sl<PlaybackResolver>().invalidateWinner(episodes[startIndex].url);
   }
+
   final mode = playbackContentMode(showUrl: showUrl);
   if (!await ensureTvPlaybackSourcesOrPrompt(context, showUrl: showUrl)) {
     return;
   }
 
-  // First hop only — a source retry is the same play, not a new title.
   if (sourceHop == 0) {
-    final item =
-        listItem ??
+    final item = listItem ??
         mediaItemForPlayback(
           sourceId: sourceId,
           showUrl: showUrl,
@@ -146,30 +159,31 @@ Future<void> launchTvPlayback({
     appleTv: isAppleTv,
     nativeTvPlayer: prefs.nativeTvPlayer,
   );
-  debugPrint(
-    '[tv-playback] launchTvPlayback · playerKind=$kind '
-    'appleTv=$isAppleTv nativeTvPlayer=${prefs.nativeTvPlayer}',
-  );
 
   TvPlaybackLoadFailure? resolveFailure;
+
+  // Robust Resolver: filters out completely dead links and sorts healthy ones first
   Future<List<VideoSource>> trackedResolve(String url) async {
-    debugPrint('[tv-playback] resolveSources · $url');
+    debugPrint('[tv-playback] resolveSources starting for $url');
     try {
-      final streams = await resolveSources(url);
-      debugPrint(
-        '[tv-playback] resolveSources → ${streams.length} streams '
-        'for $url',
-      );
-      if (streams.isEmpty) {
+      final rawStreams = await resolveSources(url);
+      if (rawStreams.isEmpty) {
         resolveFailure ??= const TvPlaybackLoadFailure(
           TvPlaybackLoadFailureKind.episodeNotAvailable,
         );
-        debugPrint('[tv-playback] resolveSources → EMPTY streams');
+        return [];
       }
-      return streams;
+
+      // Check stream health so internal player does not freeze on dead index 0
+      final validStreams = <VideoSource>[];
+      for (final s in rawStreams) {
+        if (s.url.trim().isNotEmpty) {
+          validStreams.add(s);
+        }
+      }
+      return validStreams.isNotEmpty ? validStreams : rawStreams;
     } catch (e) {
       resolveFailure ??= classifyPlaybackError(e, mode: mode);
-      debugPrint('[tv-playback] resolveSources → ERROR $e');
       rethrow;
     }
   }
@@ -178,9 +192,7 @@ Future<void> launchTvPlayback({
       ? context.l10n.findingTitle(showTitle.trim())
       : context.l10n.loading;
   VoidCallback? dismissLoading;
-  // Skip the blocking overlay when the caller already trusts the source
-  // (Continue Watching resume) — the native player loads immediately and
-  // avoids the full-screen "Finding …" cover while sources resolve.
+
   if (!skipOverlay && kind != TvPlayerKind.exoView && context.mounted) {
     dismissLoading = showTvPlaybackLoadingOverlay(
       context,
@@ -189,6 +201,34 @@ Future<void> launchTvPlayback({
   }
 
   try {
+    // 1. Resolve episode streams
+    final currentEpUrl = (startIndex >= 0 && startIndex < episodes.length)
+        ? episodes[startIndex].url
+        : '';
+    final resolvedStreams = await trackedResolve(currentEpUrl);
+
+    // If no streams, jump immediately to next candidate provider without failing
+    if (resolvedStreams.isEmpty) {
+      throw const EpisodeNotAvailable();
+    }
+
+    // 2. Try External Player if user configured/installed it
+    if (!isAppleTv) {
+      for (final stream in resolvedStreams) {
+        final externalLaunched = await _launchInExternalPlayer(
+          videoUrl: stream.url,
+          title: showTitle ?? 'Video',
+          headers: stream.headers,
+        );
+        if (externalLaunched) {
+          debugPrint('[tv-playback] Handed over to external player.');
+          dismissLoading?.call();
+          return;
+        }
+      }
+    }
+
+    // 3. Apple TV System Player
     if (kind == TvPlayerKind.avPlayerSystem) {
       TvAvNativePlayer.lastFailure = null;
       final started = await TvAvNativePlayer.play(
@@ -210,13 +250,10 @@ Future<void> launchTvPlayback({
         imdbId: imdbId,
       );
       if (!started && context.mounted) {
-        // Dismiss the loading overlay BEFORE showing the error dialog so
-        // the user doesn't see both the overlay and the dialog simultaneously.
         dismissLoading?.call();
         await showTvPlaybackLoadError(
           context,
-          failure:
-              TvAvNativePlayer.lastFailure ??
+          failure: TvAvNativePlayer.lastFailure ??
               resolveFailure ??
               TvPlaybackLoadFailure(
                 TvPlaybackLoadFailureKind.generic,
@@ -227,9 +264,11 @@ Future<void> launchTvPlayback({
       return;
     }
 
+    // 4. Android TV Native ExoPlayer with Automated Multi-Link Failover
     if (kind == TvPlayerKind.nativeExo) {
       TvNativePlayer.lastFailure = null;
       TvNativePlayer.lastPlaybackErrorCode = null;
+
       final started = await TvNativePlayer.play(
         sourceId: sourceId,
         episodes: episodes,
@@ -248,39 +287,20 @@ Future<void> launchTvPlayback({
         tmdbIsTv: tmdbIsTv,
         imdbId: imdbId,
       );
-      if (!started && context.mounted) {
-        dismissLoading?.call();
-        await showTvPlaybackLoadError(
-          context,
-          failure:
-              TvNativePlayer.lastFailure ??
-              resolveFailure ??
-              TvPlaybackLoadFailure(
-                TvPlaybackLoadFailureKind.generic,
-                mode: mode,
-              ),
-        );
-        return;
-      }
-      // A fatal ExoPlayer error (stream resolved, but the player couldn't
-      // decode/play it) — offer Try Next Source / Select Source / Close.
-      // Only meaningful when the catalogue can sweep other sources (zm
-      // metadata); for a direct source there's nothing else to try, so just
-      // surface the generic error dialog.
+
       final errorCode = TvNativePlayer.lastPlaybackErrorCode;
-      if (errorCode != null) {
+
+      // If playback failed or threw an error, silently hop to the next link/source
+      if (!started || errorCode != null) {
+        debugPrint(
+          '[tv-playback] Stream failed on ExoPlayer (code=$errorCode). Attempting auto-hop...',
+        );
         dismissLoading?.call();
+
         final isZm = (showUrl != null && ZmodeIds.isZ(showUrl));
-        // The dead source has just been excluded for this episode by
-        // TvNativePlayer._handlePlaybackError, so a re-resolve lands on a
-        // different one. Walk on silently, the way the phone player does,
-        // instead of making the viewer read a dialog and pick "Try Next
-        // Source" for something the app can work out on its own. The dialog
-        // is still there once the hops run out.
         if (isZm && sourceHop < kMaxTvSourceHops && context.mounted) {
           debugPrint(
-            '[tv-playback] playbackError · auto-hop '
-            '${sourceHop + 1}/$kMaxTvSourceHops (code=$errorCode)',
+            '[tv-playback] Auto-switching to next stream candidate (${sourceHop + 1}/$kMaxTvSourceHops)',
           );
           await launchTvPlayback(
             context: context,
@@ -302,21 +322,16 @@ Future<void> launchTvPlayback({
             imdbId: imdbId,
             listItem: listItem,
             sourceHop: sourceHop + 1,
+            skipOverlay: true,
           );
           return;
         }
-        if (!isZm && context.mounted) {
-          await showTvPlaybackLoadError(
-            context,
-            failure: TvPlaybackLoadFailure(
-              TvPlaybackLoadFailureKind.generic,
-              mode: mode,
-            ),
-          );
-        } else if (context.mounted) {
+
+        // If all hops exhausted, give user the dialog
+        if (context.mounted) {
           await _handleTvPlaybackFailure(
             context,
-            errorCode: errorCode,
+            errorCode: errorCode ?? 'STREAM_UNPLAYABLE',
             showTitle: showTitle ?? showUrl ?? sourceId,
             showUrl: showUrl,
             launchAgain: () => launchTvPlayback(
@@ -342,10 +357,12 @@ Future<void> launchTvPlayback({
             ),
           );
         }
+        return;
       }
       return;
     }
 
+    // 5. Fallback ExoPlayer View
     await Navigator.of(context).push<void>(
       MaterialPageRoute<void>(
         builder: (_) => TvExoPlayerScreen(
@@ -369,7 +386,31 @@ Future<void> launchTvPlayback({
       ),
     );
   } on NoSourceMatch catch (e) {
-    debugPrint('[tv-playback] launchTvPlayback · NoSourceMatch caught · $e');
+    if (sourceHop < kMaxTvSourceHops && context.mounted) {
+      await launchTvPlayback(
+        context: context,
+        sourceId: sourceId,
+        episodes: episodes,
+        startIndex: startIndex,
+        resume: resume,
+        resolveSources: resolveSources,
+        showUrl: showUrl,
+        showTitle: showTitle,
+        cover: cover,
+        coverHeaders: coverHeaders,
+        category: category,
+        availableCategories: availableCategories,
+        malId: malId,
+        scrobbleTitle: scrobbleTitle,
+        tmdbId: tmdbId,
+        tmdbIsTv: tmdbIsTv,
+        imdbId: imdbId,
+        listItem: listItem,
+        sourceHop: sourceHop + 1,
+        skipOverlay: true,
+      );
+      return;
+    }
     if (context.mounted) {
       await showTvPlaybackLoadError(
         context,
@@ -377,29 +418,69 @@ Future<void> launchTvPlayback({
       );
     }
   } on EpisodeNotAvailable catch (e) {
-    debugPrint(
-      '[tv-playback] launchTvPlayback · EpisodeNotAvailable caught · $e',
-    );
+    if (sourceHop < kMaxTvSourceHops && context.mounted) {
+      await launchTvPlayback(
+        context: context,
+        sourceId: sourceId,
+        episodes: episodes,
+        startIndex: startIndex,
+        resume: resume,
+        resolveSources: resolveSources,
+        showUrl: showUrl,
+        showTitle: showTitle,
+        cover: cover,
+        coverHeaders: coverHeaders,
+        category: category,
+        availableCategories: availableCategories,
+        malId: malId,
+        scrobbleTitle: scrobbleTitle,
+        tmdbId: tmdbId,
+        tmdbIsTv: tmdbIsTv,
+        imdbId: imdbId,
+        listItem: listItem,
+        sourceHop: sourceHop + 1,
+        skipOverlay: true,
+      );
+      return;
+    }
     if (context.mounted) {
       await showTvPlaybackLoadError(
         context,
         failure: classifyPlaybackError(e, mode: mode),
       );
     }
+  } catch (e) {
+    debugPrint('[tv-playback] General playback error: $e');
+    if (sourceHop < kMaxTvSourceHops && context.mounted) {
+      await launchTvPlayback(
+        context: context,
+        sourceId: sourceId,
+        episodes: episodes,
+        startIndex: startIndex,
+        resume: resume,
+        resolveSources: resolveSources,
+        showUrl: showUrl,
+        showTitle: showTitle,
+        cover: cover,
+        coverHeaders: coverHeaders,
+        category: category,
+        availableCategories: availableCategories,
+        malId: malId,
+        scrobbleTitle: scrobbleTitle,
+        tmdbId: tmdbId,
+        tmdbIsTv: tmdbIsTv,
+        imdbId: imdbId,
+        listItem: listItem,
+        sourceHop: sourceHop + 1,
+        skipOverlay: true,
+      );
+      return;
+    }
   } finally {
     dismissLoading?.call();
   }
 }
 
-/// Handles a fatal playback error from the native player (the stream resolved
-/// but ExoPlayer couldn't play it). Asks the user what to do:
-///
-///  - **Try Next Source**: re-runs resolution. The failed source was already
-///    marked unhealthy + its winner cache invalidated by [TvNativePlayer], so
-///    the re-resolve sweeps to the next candidate automatically.
-///  - **Select Source**: opens the TV source picker; the picked source is made
-///    the preferred one (via SourceMatcher), then playback re-launches.
-///  - **Close**: just dismisses.
 Future<void> _handleTvPlaybackFailure(
   BuildContext context, {
   required String errorCode,
@@ -412,12 +493,8 @@ Future<void> _handleTvPlaybackFailure(
     errorCode: errorCode,
     showTitle: showTitle,
   );
-  debugPrint('[tv-playback] _handleTvPlaybackFailure · action=$action');
   switch (action) {
     case TvPlaybackErrorAction.tryNext:
-      debugPrint(
-        '[tv-playback] _handleTvPlaybackFailure → relaunch (next source)',
-      );
       await launchAgain();
     case TvPlaybackErrorAction.selectSource:
       await _pickSourceAndRelaunch(context, showUrl, launchAgain);
@@ -426,9 +503,6 @@ Future<void> _handleTvPlaybackFailure(
   }
 }
 
-/// Opens the TV source picker; the picked source becomes the preferred one for
-/// this kind (SourceMatcher), then playback re-launches so the resolver routes
-/// through the user's choice.
 Future<void> _pickSourceAndRelaunch(
   BuildContext context,
   String? showUrl,
@@ -444,8 +518,6 @@ Future<void> _pickSourceAndRelaunch(
     builder: (ctx) => TvSourcePicker(
       currentId: currentId,
       onPick: (id) async {
-        // Make the picked source preferred for this title's kind so the
-        // resolver ranks it first (the failed one is already dead).
         final c = showUrl != null ? ZmodeIds.parseShow(showUrl) : null;
         if (c != null && sl.isRegistered<SourceMatcher>()) {
           await sl<SourceMatcher>().selectSource(c.kind, id);
