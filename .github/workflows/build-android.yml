@@ -3,6 +3,9 @@ name: Build Android APKs (Mobile & TV)
 on:
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     name: Build Android APKs
