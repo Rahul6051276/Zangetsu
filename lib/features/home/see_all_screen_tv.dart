@@ -12,15 +12,6 @@ import '../../core/zmode/zmode_ids.dart';
 import '../../l10n/l10n.dart';
 import '../search/meta_filter_sheet.dart';
 
-/// TV variant of [SeeAllScreen]: a full-screen D-pad-navigable poster grid.
-///
-/// Constructor is byte-compatible with [SeeAllScreen] so the caller's
-/// `if (isTv)` branch is a one-line forwarding return.
-///
-/// When [onLoadMore] is provided the grid paginates: as D-pad focus / scroll
-/// approaches the last rows the next page is fetched and appended. When it's
-/// null the grid is a fixed list over [items] — identical to the pre-pagination
-/// behaviour, so search / JS / non-paginating callers are unchanged.
 class SeeAllScreenTv extends StatefulWidget {
   const SeeAllScreenTv({
     super.key,
@@ -39,14 +30,7 @@ class SeeAllScreenTv extends StatefulWidget {
   final List<MediaItem> items;
   final void Function(MediaItem) onTap;
   final void Function(MediaItem)? onLongPress;
-
-  /// Optional per-item poster badges (e.g. SUB/DUB/MOVIE). Mirrors
-  /// [SeeAllScreen.tagsFor] so callers are unchanged.
   final List<String> Function(MediaItem)? tagsFor;
-
-  /// Optional next-page fetcher for infinite scroll. `page` is 1-based and the
-  /// initial [items] ARE page 1, so the first call requests page 2. Returning an
-  /// empty list (or only already-seen items) ends pagination. Null → fixed list.
   final Future<List<MediaItem>> Function(int page)? onLoadMore;
   final Future<MediaItemPage> Function(
     String query,
@@ -62,14 +46,10 @@ class SeeAllScreenTv extends StatefulWidget {
 }
 
 class _SeeAllScreenTvState extends State<SeeAllScreenTv> {
-  /// 6 columns keeps the cards near the home-rail ~140 dp scale on a 1080p TV
-  /// (5 rendered them oversized).
-
   late final List<MediaItem> _items = [...widget.items];
   final Set<String> _seen = {};
   final ScrollController _controller = ScrollController();
 
-  /// The last page already loaded — the initial [items] are page 1.
   int _page = 1;
   bool _loading = false;
   bool _end = false;
@@ -78,6 +58,10 @@ class _SeeAllScreenTvState extends State<SeeAllScreenTv> {
   int _queryGeneration = 0;
   late MetaFilters _filters;
   final TextEditingController _queryController = TextEditingController();
+
+  // In-memory filter selections for when server search is absent
+  String? _selectedGenre;
+  String? _selectedYear;
 
   @override
   void initState() {
@@ -98,7 +82,6 @@ class _SeeAllScreenTvState extends State<SeeAllScreenTv> {
     super.dispose();
   }
 
-  /// Dedupe key — prefer the stable id, fall back to the url.
   String _keyOf(MediaItem m) => m.id.isNotEmpty ? m.id : m.url;
 
   void _onScroll() {
@@ -109,10 +92,6 @@ class _SeeAllScreenTvState extends State<SeeAllScreenTv> {
     }
   }
 
-  /// Index-based trigger: when a cell within the last two rows is BUILT (D-pad
-  /// focus scrolled the grid enough to lazily build it), fetch the next page.
-  /// Complements [_onScroll] for the case where the first page fits without
-  /// scrolling. Scheduled post-frame so it never calls setState during build.
   void _maybeLoadFromIndex(int index) {
     if (widget.onLoadMore == null || _loading || _end) return;
     if (index < _items.length - tvPosterGridColumns(context) * 2) return;
@@ -170,39 +149,41 @@ class _SeeAllScreenTvState extends State<SeeAllScreenTv> {
   }
 
   Future<void> _runQuery(String query) async {
-    final search = widget.onSearch;
-    if (search == null) return;
-    final generation = ++_queryGeneration;
-    setState(() {
-      _items.clear();
-      _seen.clear();
-      _page = 1;
-      _end = false;
-      _loading = true;
-      _showNextPage = false;
-    });
-    var first = const MediaItemPage(items: <MediaItem>[], hasMore: false);
-    try {
-      first = await search(query.trim(), _filters, 1);
-    } catch (_) {
-      first = const MediaItemPage(items: <MediaItem>[], hasMore: false);
+    if (widget.onSearch != null) {
+      final generation = ++_queryGeneration;
+      setState(() {
+        _items.clear();
+        _seen.clear();
+        _page = 1;
+        _end = false;
+        _loading = true;
+        _showNextPage = false;
+      });
+      var first = const MediaItemPage(items: <MediaItem>[], hasMore: false);
+      try {
+        first = await widget.onSearch!(query.trim(), _filters, 1);
+      } catch (_) {
+        first = const MediaItemPage(items: <MediaItem>[], hasMore: false);
+      }
+      if (!mounted || generation != _queryGeneration) return;
+      final fresh = <MediaItem>[];
+      for (final item in first.items) {
+        if (_seen.add(_keyOf(item))) fresh.add(item);
+      }
+      setState(() {
+        _items.addAll(fresh);
+        _loading = false;
+        _end = !first.hasMore;
+        _showNextPage = first.hasMore;
+      });
+    } else {
+      // In-memory filter refresh
+      setState(() {});
     }
-    if (!mounted || generation != _queryGeneration) return;
-    final fresh = <MediaItem>[];
-    for (final item in first.items) {
-      if (_seen.add(_keyOf(item))) fresh.add(item);
-    }
-    setState(() {
-      _items.addAll(fresh);
-      _loading = false;
-      _end = !first.hasMore;
-      _showNextPage = first.hasMore;
-    });
   }
 
   Future<void> _openFilters() async {
-    final kind = widget.filterKind;
-    if (kind == null) return;
+    final kind = widget.filterKind ?? ZKind.movie;
     final picked = await showMetaFilterDialog(
       context,
       kind,
@@ -226,9 +207,29 @@ class _SeeAllScreenTvState extends State<SeeAllScreenTv> {
     if (hadQuery) _runQuery('');
   }
 
+  List<MediaItem> get _displayedItems {
+    if (widget.onSearch != null) return _items;
+
+    final q = _queryController.text.trim().toLowerCase();
+    return _items.where((it) {
+      if (q.isNotEmpty && !it.title.toLowerCase().contains(q)) {
+        return false;
+      }
+      if (_selectedGenre != null && !it.genres.contains(_selectedGenre)) {
+        return false;
+      }
+      if (_filters.year != null && it.year != null && it.year != _filters.year) {
+        return false;
+      }
+      return true;
+    }).toList();
+  }
+
   @override
   Widget build(BuildContext context) {
     final paginating = widget.onLoadMore != null || widget.onSearch != null;
+    final displayed = _displayedItems;
+
     return Scaffold(
       backgroundColor: AppColors.bg,
       appBar: AppBar(
@@ -258,6 +259,11 @@ class _SeeAllScreenTvState extends State<SeeAllScreenTv> {
                         border: InputBorder.none,
                         isDense: true,
                       ),
+                      onChanged: (val) {
+                        if (widget.onSearch == null) {
+                          setState(() {});
+                        }
+                      },
                       onSubmitted: _runQuery,
                     )
                   : Text(
@@ -267,42 +273,40 @@ class _SeeAllScreenTvState extends State<SeeAllScreenTv> {
                       overflow: TextOverflow.ellipsis,
                     ),
             ),
-            if (widget.onSearch != null) ...[
-              TvFocusable(
-                key: const ValueKey('tv-see-all-search'),
-                variant: TvFocusVariant.float,
-                semanticLabel: context.l10n.search2,
-                onTap: _toggleSearch,
-                builder: (focused) => Padding(
-                  padding: const EdgeInsets.all(12),
-                  child: Icon(
-                    _searching ? Icons.close_rounded : Icons.search_rounded,
-                    color: focused ? AppColors.accent : AppColors.textPrimary,
-                  ),
+            TvFocusable(
+              key: const ValueKey('tv-see-all-search'),
+              variant: TvFocusVariant.float,
+              semanticLabel: context.l10n.search2,
+              onTap: _toggleSearch,
+              builder: (focused) => Padding(
+                padding: const EdgeInsets.all(12),
+                child: Icon(
+                  _searching ? Icons.close_rounded : Icons.search_rounded,
+                  color: focused ? AppColors.accent : AppColors.textPrimary,
                 ),
               ),
-              TvFocusable(
-                key: const ValueKey('tv-see-all-filter'),
-                variant: TvFocusVariant.float,
-                semanticLabel: context.l10n.filters,
-                onTap: _openFilters,
-                builder: (focused) => Padding(
-                  padding: const EdgeInsets.all(12),
-                  child: Icon(
-                    Icons.filter_list_rounded,
-                    color: focused || _filters.isNotEmpty
-                        ? AppColors.accent
-                        : AppColors.textPrimary,
-                  ),
+            ),
+            TvFocusable(
+              key: const ValueKey('tv-see-all-filter'),
+              variant: TvFocusVariant.float,
+              semanticLabel: context.l10n.filters,
+              onTap: _openFilters,
+              builder: (focused) => Padding(
+                padding: const EdgeInsets.all(12),
+                child: Icon(
+                  Icons.filter_list_rounded,
+                  color: focused || _filters.isNotEmpty
+                      ? AppColors.accent
+                      : AppColors.textPrimary,
                 ),
               ),
-            ],
+            ),
           ],
         ),
       ),
       body: Stack(
         children: [
-          if (widget.onSearch != null && _items.isEmpty)
+          if (displayed.isEmpty)
             Center(
               child: Column(
                 mainAxisSize: MainAxisSize.min,
@@ -329,22 +333,21 @@ class _SeeAllScreenTvState extends State<SeeAllScreenTv> {
                 ],
               ),
             ),
-          if (_items.isNotEmpty)
+          if (displayed.isNotEmpty)
             GridView.builder(
               controller: paginating ? _controller : null,
               padding: const EdgeInsets.fromLTRB(40, 8, 40, 40),
               cacheExtent: 800,
               gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
                 crossAxisCount: tvPosterGridColumns(context),
-                // Match the grid geometry to the chosen title placement.
                 childAspectRatio: tvPosterGridAspect(context),
                 crossAxisSpacing: 18,
                 mainAxisSpacing: 22,
               ),
-              itemCount: _items.length,
+              itemCount: displayed.length,
               itemBuilder: (context, i) {
                 if (paginating) _maybeLoadFromIndex(i);
-                final item = _items[i];
+                final item = displayed[i];
                 return TvPosterTile(
                   autofocus: i == 0,
                   title: item.title,
@@ -365,9 +368,7 @@ class _SeeAllScreenTvState extends State<SeeAllScreenTv> {
                 );
               },
             ),
-          // Bottom loading indicator while the next page is in flight (only in
-          // the paginating configuration, so non-paginating callers are unchanged).
-          if (paginating && _loading && _items.isNotEmpty)
+          if (paginating && _loading && displayed.isNotEmpty)
             const Positioned(
               bottom: 12,
               left: 0,
@@ -380,7 +381,7 @@ class _SeeAllScreenTvState extends State<SeeAllScreenTv> {
                 ),
               ),
             ),
-          if (_showNextPage && _items.isNotEmpty)
+          if (_showNextPage && displayed.isNotEmpty)
             Positioned(
               bottom: 8,
               left: 0,
