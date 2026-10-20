@@ -28,6 +28,7 @@ import '../../core/ui/frosted_surface.dart';
 import '../downloads/downloads_screen.dart';
 import '../history/history_screen.dart';
 import '../profiles/viewer_profiles_screen.dart';
+import '../profiles/viewer_profile_home_screen.dart';
 import '../auth/auth_cubit.dart';
 import '../home/cubit/home_cubit.dart';
 import '../home/home_screen.dart';
@@ -40,7 +41,7 @@ import '../../core/ui/dock_visibility.dart';
 import 'root_shell_tv.dart';
 
 /// Shared pages for [RootShell] (phone bottom nav) and [RootShellTv] (TV left
-/// rail). Settings stays at index 3 for both shells.
+/// rail). TV uses Settings at index 3; phone uses its viewer overview instead.
 ///
 /// [searchFocusSignal] is bumped each time the Search rail item is
 /// (re)selected on TV so the embedded search screen can auto-focus its
@@ -269,7 +270,7 @@ class _RootShellState extends State<RootShell>
   /// [IndexedStack] index is just the tab's position in that list.
   ///
   /// Search is no longer a phone dock tab (it's a Home header icon now), so
-  /// this never places `shared[1]`. The Profile dock item opens Settings.
+  /// this never places `shared[1]`. TV keeps its Settings rail destination.
   List<Widget> _pagesFor(List<DockTab> tabs, String profileId) {
     final shared = buildShellPages(null, homeIsActive: _tab == DockTab.home);
     return [
@@ -279,7 +280,7 @@ class _RootShellState extends State<RootShell>
           child: switch (t) {
             DockTab.home => shared[0],
             DockTab.myList => shared[2],
-            DockTab.profile => shared[3], // Settings
+            DockTab.profile => const ViewerProfileHomeScreen(),
             // Both normally get pushed with a back button; as tabs they own the
             // whole screen, so their own back affordance is suppressed.
             DockTab.downloads => const DownloadsScreen(showBack: false),
@@ -367,7 +368,7 @@ class _RootShellState extends State<RootShell>
             valueListenable: dockHiddenBySection,
             builder: (context, sectionOpen, _) {
               // Slide the dock away only when a Settings section is open AND the
-              // Profile (Settings) tab is showing — every other tab keeps its dock.
+              // Profile tab is showing — every other tab keeps its dock.
               final hide = sectionOpen && _tab == DockTab.profile;
               return Column(
                 mainAxisSize: MainAxisSize.min,

@@ -238,7 +238,9 @@ void main() {
     tester,
   ) async {
     await _pumpSettings(tester, openFromProfile: true);
-    await tester.tap(find.byTooltip('App settings'));
+    await tester.tap(find.byTooltip('Profile menu'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('App settings'));
     await tester.pumpAndSettle();
 
     expect(find.byType(AppBar), findsOneWidget);

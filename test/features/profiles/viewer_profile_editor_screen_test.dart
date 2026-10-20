@@ -53,9 +53,65 @@ Widget _profileStoreEditorHost(
   ),
 );
 
+Future<void> _scrollTo(WidgetTester tester, Finder target) async {
+  if (target.evaluate().isEmpty) {
+    await tester.scrollUntilVisible(
+      target,
+      240,
+      scrollable: find.byType(Scrollable).last,
+    );
+  }
+  await tester.ensureVisible(target);
+  await tester.pumpAndSettle();
+}
+
 const profile = ViewerProfile(id: 'default', name: 'Home', avatar: 1);
 
 void main() {
+  testWidgets('editor uses one form and removes built-in avatar choices', (
+    tester,
+  ) async {
+    await tester.pumpWidget(_profileEditorHost((_) {}));
+    await tester.tap(find.text('Open editor'));
+    await tester.pumpAndSettle();
+
+    final form = find.byKey(const ValueKey('profile-editor-form-card'));
+    expect(form, findsOneWidget);
+    expect(
+      find.descendant(
+        of: form,
+        matching: find.byKey(const ValueKey('profile-editor-name')),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: form,
+        matching: find.byKey(const ValueKey('profile-editor-bio')),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('profile-editor-cover-card')),
+      findsOneWidget,
+    );
+    expect(find.text('Choose an avatar'), findsNothing);
+    expect(find.byKey(const ValueKey('profile-editor-avatar-0')), findsNothing);
+
+    await tester.enterText(
+      find.byKey(const ValueKey('profile-editor-name')),
+      'Evening',
+    );
+    await tester.pump();
+    expect(
+      find.descendant(
+        of: form,
+        matching: find.byKey(const ValueKey('profile-editor-preview-name')),
+      ),
+      findsOneWidget,
+    );
+  });
+
   testWidgets('editor is a full page and returns the saved values', (
     tester,
   ) async {
@@ -66,7 +122,10 @@ void main() {
 
     expect(find.byType(AlertDialog), findsNothing);
     expect(find.text('Edit profile'), findsOneWidget);
-    await tester.enterText(find.byType(TextField), 'Evening');
+    await tester.enterText(
+      find.byKey(const ValueKey('profile-editor-name')),
+      'Evening',
+    );
     await tester.tap(find.text('Save'));
     await tester.pumpAndSettle();
 
@@ -75,25 +134,74 @@ void main() {
     expect(result?.isKids, isFalse);
   });
 
+  testWidgets('editor saves and clears a viewer bio', (tester) async {
+    ProfileEditorResult? result;
+    await tester.pumpWidget(
+      _profileEditorHost(
+        (value) => result = value,
+        editingProfile: const ViewerProfile(
+          id: 'guest',
+          name: 'Guest',
+          bio: 'Old bio',
+        ),
+      ),
+    );
+    await tester.tap(find.text('Open editor'));
+    await tester.pumpAndSettle();
+    final bioField = find.byKey(const ValueKey('profile-editor-bio'));
+    await _scrollTo(tester, bioField);
+    expect(tester.widget<TextField>(bioField).controller?.text, 'Old bio');
+    await tester.enterText(bioField, 'New bio');
+    await tester.tap(find.text('Save'));
+    await tester.pumpAndSettle();
+    expect(result?.bio, 'New bio');
+  });
+
+  testWidgets('editor can remove the optional profile cover', (tester) async {
+    ProfileEditorResult? result;
+    await tester.pumpWidget(
+      _profileEditorHost(
+        (value) => result = value,
+        editingProfile: const ViewerProfile(
+          id: 'guest',
+          name: 'Guest',
+          coverUrl: 'https://cdn.example/cover.jpg',
+        ),
+      ),
+    );
+    await tester.tap(find.text('Open editor'));
+    await tester.pumpAndSettle();
+    await _scrollTo(tester, find.text('Remove cover'));
+    await tester.tap(find.text('Remove cover'));
+    await tester.pump();
+    await tester.tap(find.text('Save'));
+    await tester.pumpAndSettle();
+    expect(result?.coverUrl, isNull);
+  });
+
   testWidgets('cancel returns no profile changes', (tester) async {
     ProfileEditorResult? result;
     await tester.pumpWidget(_profileEditorHost((value) => result = value));
     await tester.tap(find.text('Open editor'));
     await tester.pumpAndSettle();
-    await tester.enterText(find.byType(TextField), 'Discard');
+    await tester.enterText(
+      find.byKey(const ValueKey('profile-editor-name')),
+      'Discard',
+    );
     await tester.tap(find.text('Cancel'));
     await tester.pumpAndSettle();
 
     expect(result, isNull);
   });
 
-  testWidgets('choosing a built-in avatar replaces a deleted photo', (
+  testWidgets('removing a profile photo restores its saved icon', (
     tester,
   ) async {
     final profiles = _RecordingProfileStore();
     const photoProfile = ViewerProfile(
       id: 'photo-profile',
       name: 'Photo profile',
+      avatar: 4,
       photoUrl: 'https://cdn.example/deleted.jpg',
     );
     profiles.visibleProfiles = [
@@ -116,7 +224,7 @@ void main() {
     await tester.tap(find.text('Open editor'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
-    await tester.tap(find.byKey(const ValueKey('profile-editor-avatar-4')));
+    await tester.tap(find.byTooltip('Remove photo'));
     await tester.pump();
 
     expect(find.byType(Image), findsNothing);
@@ -156,25 +264,55 @@ void main() {
     expect(pickedCall?.arguments['imageQuality'], 100);
   });
 
-  testWidgets('edit saves the entered name, avatar, and kids setting', (
-    tester,
-  ) async {
-    final store = _RecordingProfileStore();
-    await tester.pumpWidget(_profileStoreEditorHost(store));
+  testWidgets('cover picker requests a bounded wide source', (tester) async {
+    const channel = MethodChannel('plugins.flutter.io/image_picker');
+    MethodCall? pickedCall;
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      pickedCall = call;
+      return null;
+    });
+    addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+
+    await tester.pumpWidget(_profileEditorHost((_) {}));
     await tester.tap(find.text('Open editor'));
     await tester.pumpAndSettle();
-
-    await tester.enterText(find.byType(TextField), 'Evening');
-    await tester.tap(find.byKey(const ValueKey('profile-editor-avatar-4')));
-    await tester.tap(find.byType(Switch));
+    await _scrollTo(tester, find.text('Add cover'));
+    await tester.tap(find.text('Add cover'));
     await tester.pump();
-    await tester.tap(find.text('Save'));
-    await tester.pumpAndSettle();
 
-    expect(store.renamedTo, 'Evening');
-    expect(store.updatedAvatar, 4);
-    expect(store.updatedIsKids, isTrue);
+    expect(pickedCall?.method, 'pickImage');
+    expect(pickedCall?.arguments['maxWidth'], 1600.0);
+    expect(pickedCall?.arguments['maxHeight'], 900.0);
   });
+
+  testWidgets(
+    'edit saves the name and kids setting without changing the avatar',
+    (tester) async {
+      final store = _RecordingProfileStore();
+      await tester.pumpWidget(_profileStoreEditorHost(store));
+      await tester.tap(find.text('Open editor'));
+      await tester.pumpAndSettle();
+
+      await tester.enterText(
+        find.byKey(const ValueKey('profile-editor-name')),
+        'Evening',
+      );
+      tester.testTextInput.hide();
+      await tester.pumpAndSettle();
+      await _scrollTo(tester, find.text('Kids profile'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Kids profile'));
+      await tester.pump();
+      await tester.tap(find.text('Save'));
+      await tester.pumpAndSettle();
+
+      expect(store.renamedTo, 'Evening');
+      expect(store.updatedAvatar, 1);
+      expect(store.updatedIsKids, isTrue);
+    },
+  );
 
   testWidgets('renaming Home updates the sign-in account name', (tester) async {
     final store = _RecordingProfileStore();
@@ -187,7 +325,10 @@ void main() {
     await tester.pumpWidget(_profileStoreEditorHost(store));
     await tester.tap(find.text('Open editor'));
     await tester.pumpAndSettle();
-    await tester.enterText(find.byType(TextField), 'Evening');
+    await tester.enterText(
+      find.byKey(const ValueKey('profile-editor-name')),
+      'Evening',
+    );
     await tester.tap(find.text('Save'));
     await tester.pumpAndSettle();
 
@@ -213,7 +354,10 @@ void main() {
     );
     await tester.tap(find.text('Open editor'));
     await tester.pumpAndSettle();
-    await tester.enterText(find.byType(TextField), 'Family');
+    await tester.enterText(
+      find.byKey(const ValueKey('profile-editor-name')),
+      'Family',
+    );
     await tester.tap(find.text('Save'));
     await tester.pumpAndSettle();
 
@@ -234,7 +378,10 @@ void main() {
     await tester.pumpWidget(_profileStoreEditorHost(store));
     await tester.tap(find.text('Open editor'));
     await tester.pumpAndSettle();
-    await tester.enterText(find.byType(TextField), 'Evening');
+    await tester.enterText(
+      find.byKey(const ValueKey('profile-editor-name')),
+      'Evening',
+    );
     await tester.tap(find.text('Save'));
     await tester.pumpAndSettle();
 
@@ -254,13 +401,39 @@ void main() {
     await tester.pumpWidget(_profileStoreEditorHost(store));
     await tester.tap(find.text('Open editor'));
     await tester.pumpAndSettle();
-    await tester.enterText(find.byType(TextField), 'Evening');
+    await tester.enterText(
+      find.byKey(const ValueKey('profile-editor-name')),
+      'Evening',
+    );
     await tester.tap(find.text('Save'));
     await tester.pumpAndSettle();
 
     expect(auth.renameCalls, ['Evening', 'Home']);
     expect(store.renameCalls, ['Evening', 'Home']);
     expect(find.text('Could not update profile name'), findsOneWidget);
+  });
+
+  testWidgets('reports when profile changes are queued for cloud sync', (
+    tester,
+  ) async {
+    final store = _RecordingProfileStore();
+    Future<void>? editorFinished;
+    await tester.pumpWidget(
+      _profileStoreEditorHost(
+        store,
+        onOpened: (future) => editorFinished = future,
+      ),
+    );
+    await tester.tap(find.text('Open editor'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Save'));
+    await tester.pumpAndSettle();
+    await editorFinished!;
+
+    expect(
+      find.text('Saved on this device; cloud sync will retry.'),
+      findsOneWidget,
+    );
   });
 }
 
@@ -298,6 +471,9 @@ class _RecordingProfileStore extends ViewerProfileStore {
   bool? updatedIsKids;
   String? updatedPhotoUrl;
   bool? clearedPhotoUrl;
+  String? updatedBio;
+  String? updatedCoverUrl;
+  bool? clearedCoverUrl;
 
   @override
   List<ViewerProfile> get profiles => visibleProfiles;
@@ -312,15 +488,21 @@ class _RecordingProfileStore extends ViewerProfileStore {
   @override
   Future<bool> update(
     String profileId, {
+    String? bio,
     int? avatar,
     bool? isKids,
     String? photoUrl,
     bool clearPhotoUrl = false,
+    String? coverUrl,
+    bool clearCoverUrl = false,
   }) async {
     updatedAvatar = avatar;
+    updatedBio = bio;
     updatedIsKids = isKids;
     updatedPhotoUrl = photoUrl;
     clearedPhotoUrl = clearPhotoUrl;
+    updatedCoverUrl = coverUrl;
+    clearedCoverUrl = clearCoverUrl;
     return synced;
   }
 }

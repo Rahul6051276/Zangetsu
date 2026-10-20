@@ -63,6 +63,11 @@ Mozilla CA certificate bundle
   The dated, unmodified PEM is bundled at
   android/app/src/main/res/raw/trusted_roots.pem for Android/Dart HTTPS trust.
 
+Runtime-loaded profile teaser GIF (not bundled)
+  Source: https://custom-doodle.com/wp-content/uploads/doodle/auto-draft/one-piece-dancing-roronoa-zoro-doodle.gif
+  Loaded from Custom Doodle when the profile screen is shown and cached on the
+  device. The GIF is not included in the repository or app package.
+
 ────────────────────────────────────────────────────────────────────────────
 Keeping this file current
 ────────────────────────────────────────────────────────────────────────────

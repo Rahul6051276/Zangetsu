@@ -165,6 +165,28 @@ void main() {
   });
 
   test(
+    'cover upload keeps a wide image sharp within the Worker limit',
+    () async {
+      final adapter = _RecordingAdapter();
+      final dio = Dio()..httpClientAdapter = adapter;
+      final source = img.Image(width: 1400, height: 560, numChannels: 3)
+        ..clear(img.ColorRgb8(30, 60, 90));
+      final png = img.encodePng(source);
+
+      final result = await ProfileAvatarUploader(
+        dio,
+      ).uploadCover(bytes: png, token: 'token');
+
+      expect(result, 'https://cdn.example/avatar.jpg');
+      expect(adapter.contentType, 'image/jpeg');
+      expect(adapter.contentLength, lessThanOrEqualTo(512 * 1024));
+      final uploaded = img.decodeImage(adapter.uploadedBytes)!;
+      expect(uploaded.width, 1400);
+      expect(uploaded.height, 560);
+    },
+  );
+
+  test(
     'preserves photo proportions when a large image is compressed',
     () async {
       final adapter = _RecordingAdapter();

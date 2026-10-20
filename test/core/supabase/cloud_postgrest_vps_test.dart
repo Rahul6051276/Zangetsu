@@ -134,6 +134,8 @@ void main() {
       const ViewerProfile(
         id: 'profile-1',
         name: 'Viewer',
+        bio: 'Reading manga',
+        coverUrl: 'https://cdn.example/cover.jpg',
         accentColor: 0xFF4D8DFF,
         materialYou: true,
         amoled: false,
@@ -145,6 +147,8 @@ void main() {
     expect(requestBodies.single['accent_color'], 0xFF4D8DFF);
     expect(requestBodies.single['material_you'], isTrue);
     expect(requestBodies.single['amoled'], isFalse);
+    expect(requestBodies.single['bio'], 'Reading manga');
+    expect(requestBodies.single['cover_url'], 'https://cdn.example/cover.jpg');
   });
 
   test('backups route to the VPS backup table', () async {

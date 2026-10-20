@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
@@ -34,17 +35,24 @@ Future<void> openViewerProfileEditor(
   if (profile == null) {
     final created = await profiles.create(
       result.name,
+      bio: result.bio,
       avatar: result.avatar,
       isKids: result.isKids,
       photoUrl: result.photoUrl,
+      coverUrl: result.coverUrl,
     );
-    if (created == null && result.photoUrl != null) {
+    if (created == null &&
+        (result.photoUrl != null || result.coverUrl != null)) {
       final token =
           sl<SupabaseService>().client.auth.currentSession?.accessToken;
       if (token != null) {
-        await ProfileAvatarUploader(
-          sl<Dio>(),
-        ).delete(url: result.photoUrl!, token: token);
+        final uploader = ProfileAvatarUploader(sl<Dio>());
+        for (final url in {
+          result.photoUrl,
+          result.coverUrl,
+        }.whereType<String>()) {
+          await uploader.delete(url: url, token: token);
+        }
       }
     }
   } else {
@@ -83,11 +91,21 @@ Future<void> openViewerProfileEditor(
     }
     final synced = await profiles.update(
       profile.id,
+      bio: result.bio,
       avatar: result.avatar,
       isKids: result.isKids,
       photoUrl: result.photoUrl,
       clearPhotoUrl: result.photoUrl == null,
+      coverUrl: result.coverUrl,
+      clearCoverUrl: result.coverUrl == null,
     );
+    if (!synced && context.mounted) {
+      ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+        const SnackBar(
+          content: Text('Saved on this device; cloud sync will retry.'),
+        ),
+      );
+    }
     if (synced &&
         profile.photoUrl != null &&
         profile.photoUrl != result.photoUrl &&
@@ -103,21 +121,42 @@ Future<void> openViewerProfileEditor(
         ).delete(url: profile.photoUrl!, token: token);
       }
     }
+    if (synced &&
+        profile.coverUrl != null &&
+        profile.coverUrl != result.coverUrl &&
+        !profiles.profiles.any(
+          (other) =>
+              other.id != profile.id &&
+              (other.coverUrl == profile.coverUrl ||
+                  other.photoUrl == profile.coverUrl),
+        )) {
+      final token =
+          sl<SupabaseService>().client.auth.currentSession?.accessToken;
+      if (token != null) {
+        await ProfileAvatarUploader(
+          sl<Dio>(),
+        ).delete(url: profile.coverUrl!, token: token);
+      }
+    }
   }
 }
 
 class ProfileEditorResult {
   const ProfileEditorResult({
     required this.name,
+    required this.bio,
     required this.avatar,
     required this.isKids,
     this.photoUrl,
+    this.coverUrl,
   });
 
   final String name;
+  final String bio;
   final int avatar;
   final bool isKids;
   final String? photoUrl;
+  final String? coverUrl;
 }
 
 class ViewerProfileEditorScreen extends StatefulWidget {
@@ -139,29 +178,38 @@ class _ViewerProfileEditorScreenState extends State<ViewerProfileEditorScreen> {
   late final TextEditingController _name = TextEditingController(
     text: widget.profile?.name ?? '',
   );
-  late int _avatar = widget.profile?.avatar ?? widget.initialAvatar;
+  late final TextEditingController _bio = TextEditingController(
+    text: widget.profile?.bio ?? '',
+  );
+  late final int _avatar = widget.profile?.avatar ?? widget.initialAvatar;
   late bool _isKids = widget.profile?.isKids ?? false;
   late String? _photoUrl = widget.profile?.photoUrl;
+  late String? _coverUrl = widget.profile?.coverUrl;
   bool _uploading = false;
   String? _photoError;
+  String? _coverError;
   final _uploadedUrls = <String>{};
   String? _uploadToken;
   bool _saved = false;
 
-  bool get _canSave => _name.text.trim().isNotEmpty && !_uploading;
+  bool get _canSave =>
+      _name.text.trim().isNotEmpty &&
+      _bio.text.trim().runes.length <= ViewerProfileStore.maxBioLength &&
+      !_uploading;
 
   @override
   void dispose() {
     final token = _uploadToken;
     if (token != null) {
       for (final url in _uploadedUrls) {
-        if (_saved && url == _photoUrl) continue;
+        if (_saved && (url == _photoUrl || url == _coverUrl)) continue;
         unawaited(
           ProfileAvatarUploader(sl<Dio>()).delete(url: url, token: token),
         );
       }
     }
     _name.dispose();
+    _bio.dispose();
     super.dispose();
   }
 
@@ -280,6 +328,48 @@ class _ViewerProfileEditorScreenState extends State<ViewerProfileEditorScreen> {
     });
   }
 
+  Future<void> _pickCover() async {
+    final picked = await ImagePicker().pickImage(
+      source: ImageSource.gallery,
+      maxWidth: 1600,
+      maxHeight: 900,
+      imageQuality: 100,
+    );
+    if (picked == null || !mounted) return;
+    final bytes = await picked.readAsBytes();
+    if (!mounted) return;
+    final token = sl<SupabaseService>().client.auth.currentSession?.accessToken;
+    if (token == null) {
+      setState(() => _coverError = 'Sign in to upload a cover');
+      return;
+    }
+    setState(() {
+      _uploading = true;
+      _coverError = null;
+    });
+    final url = await ProfileAvatarUploader(
+      sl<Dio>(),
+    ).uploadCover(bytes: bytes, token: token);
+    if (!mounted) {
+      if (url != null) {
+        unawaited(
+          ProfileAvatarUploader(sl<Dio>()).delete(url: url, token: token),
+        );
+      }
+      return;
+    }
+    setState(() {
+      _uploading = false;
+      if (url != null) {
+        _uploadToken = token;
+        _uploadedUrls.add(url);
+        _coverUrl = url;
+      } else {
+        _coverError = "Couldn't upload cover. Try another image.";
+      }
+    });
+  }
+
   void _save() {
     final name = _name.text.trim();
     if (name.isEmpty || _uploading) return;
@@ -287,12 +377,50 @@ class _ViewerProfileEditorScreenState extends State<ViewerProfileEditorScreen> {
     Navigator.of(context).pop(
       ProfileEditorResult(
         name: name,
+        bio: _bio.text.trim(),
         avatar: _avatar,
         isKids: _isKids,
         photoUrl: _photoUrl,
+        coverUrl: _coverUrl,
       ),
     );
   }
+
+  Widget _editorCard(String keyName, Widget child) => Card(
+    key: ValueKey(keyName),
+    margin: EdgeInsets.zero,
+    color: AppColors.settingsCard,
+    shape: RoundedRectangleBorder(
+      borderRadius: BorderRadius.circular(26),
+      side: const BorderSide(color: AppColors.hairline),
+    ),
+    child: Padding(padding: const EdgeInsets.all(18), child: child),
+  );
+
+  InputDecoration _fieldDecoration({
+    required String label,
+    String? hint,
+    String? errorText,
+  }) => InputDecoration(
+    labelText: label,
+    hintText: hint,
+    errorText: errorText,
+    filled: true,
+    fillColor: AppColors.bg,
+    border: OutlineInputBorder(
+      borderRadius: BorderRadius.circular(20),
+      borderSide: BorderSide(color: AppColors.hairline),
+    ),
+    enabledBorder: OutlineInputBorder(
+      borderRadius: BorderRadius.circular(20),
+      borderSide: BorderSide(color: AppColors.hairline),
+    ),
+    focusedBorder: OutlineInputBorder(
+      borderRadius: BorderRadius.circular(20),
+      borderSide: BorderSide(color: AppColors.accent, width: 1.5),
+    ),
+    counterStyle: AppText.caption,
+  );
 
   @override
   Widget build(BuildContext context) {
@@ -313,9 +441,16 @@ class _ViewerProfileEditorScreenState extends State<ViewerProfileEditorScreen> {
             onPressed: () => Navigator.of(context).pop(),
             child: const Text('Cancel'),
           ),
-          TextButton(
-            onPressed: _canSave ? _save : null,
-            child: const Text('Save'),
+          Padding(
+            padding: const EdgeInsetsDirectional.only(end: 8),
+            child: FilledButton.tonal(
+              onPressed: _canSave ? _save : null,
+              style: FilledButton.styleFrom(
+                minimumSize: const Size(64, 40),
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+              ),
+              child: const Text('Save'),
+            ),
           ),
         ],
       ),
@@ -324,109 +459,229 @@ class _ViewerProfileEditorScreenState extends State<ViewerProfileEditorScreen> {
           constraints: const BoxConstraints(maxWidth: 640),
           child: ListView(
             padding: EdgeInsets.fromLTRB(
-              20,
-              20,
-              20,
-              MediaQuery.viewInsetsOf(context).bottom + 28,
+              16,
+              16,
+              16,
+              MediaQuery.viewInsetsOf(context).bottom + 24,
             ),
             children: [
-              Center(
-                child: Container(
-                  width: 96,
-                  height: 96,
-                  padding: const EdgeInsets.all(4),
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    border: Border.all(color: AppColors.accent, width: 2.5),
-                  ),
-                  child: CircleAvatar(
-                    radius: 44,
-                    backgroundColor: viewerProfileAvatarColor(_avatar),
-                    child: ProfileAvatarFace(
-                      profile: previewProfile,
-                      photoUrl: _photoUrl,
-                      iconSize: 40,
-                      photoDiameter: 88,
+              _editorCard(
+                'profile-editor-form-card',
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Row(
+                      children: [
+                        SizedBox.square(
+                          dimension: 76,
+                          child: CircleAvatar(
+                            backgroundColor: viewerProfileAvatarColor(_avatar),
+                            child: ProfileAvatarFace(
+                              profile: previewProfile,
+                              photoUrl: _photoUrl,
+                              iconSize: 36,
+                              photoDiameter: 70,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 16),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Profile photo',
+                                style: AppText.caption.copyWith(
+                                  color: AppColors.textSecondary,
+                                ),
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                _name.text.trim().isEmpty
+                                    ? 'New profile'
+                                    : _name.text.trim(),
+                                key: const ValueKey(
+                                  'profile-editor-preview-name',
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: AppText.title,
+                              ),
+                              const SizedBox(height: 8),
+                              Wrap(
+                                spacing: 4,
+                                crossAxisAlignment: WrapCrossAlignment.center,
+                                children: [
+                                  FilledButton.tonalIcon(
+                                    onPressed: _uploading ? null : _pickPhoto,
+                                    icon: _uploading
+                                        ? const SizedBox.square(
+                                            dimension: 16,
+                                            child: CircularProgressIndicator(
+                                              strokeWidth: 2,
+                                            ),
+                                          )
+                                        : const Icon(
+                                            Icons.photo_outlined,
+                                            size: 18,
+                                          ),
+                                    label: Text(
+                                      _uploading
+                                          ? 'Uploading…'
+                                          : _photoUrl == null
+                                          ? 'Choose photo'
+                                          : 'Change photo',
+                                    ),
+                                  ),
+                                  if (_photoUrl != null)
+                                    IconButton.filledTonal(
+                                      tooltip: 'Remove photo',
+                                      onPressed: _uploading
+                                          ? null
+                                          : () => setState(
+                                              () => _photoUrl = null,
+                                            ),
+                                      icon: const Icon(
+                                        Icons.delete_outline_rounded,
+                                        size: 18,
+                                      ),
+                                    ),
+                                ],
+                              ),
+                              if (_photoError != null) ...[
+                                const SizedBox(height: 4),
+                                Text(
+                                  _photoError!,
+                                  style: AppText.caption.copyWith(
+                                    color: Theme.of(context).colorScheme.error,
+                                  ),
+                                ),
+                              ],
+                            ],
+                          ),
+                        ),
+                      ],
                     ),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 12),
-              Center(
-                child: OutlinedButton.icon(
-                  onPressed: _uploading ? null : _pickPhoto,
-                  icon: _uploading
-                      ? const SizedBox.square(
-                          dimension: 16,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Icon(Icons.photo_outlined, size: 18),
-                  label: Text(_uploading ? 'Uploading…' : 'Choose photo'),
-                ),
-              ),
-              if (_photoError != null) ...[
-                const SizedBox(height: 8),
-                Center(
-                  child: Text(
-                    _photoError!,
-                    style: AppText.caption.copyWith(
-                      color: Theme.of(context).colorScheme.error,
+                    const SizedBox(height: 18),
+                    TextField(
+                      key: const ValueKey('profile-editor-name'),
+                      controller: _name,
+                      maxLength: ViewerProfileStore.maxNameLength,
+                      textCapitalization: TextCapitalization.words,
+                      textInputAction: TextInputAction.next,
+                      onChanged: (_) => setState(() {}),
+                      decoration: _fieldDecoration(label: 'Name'),
                     ),
-                  ),
-                ),
-              ],
-              const SizedBox(height: 28),
-              Text('Profile name', style: AppText.headline),
-              const SizedBox(height: 10),
-              TextField(
-                controller: _name,
-                maxLength: ViewerProfileStore.maxNameLength,
-                textCapitalization: TextCapitalization.words,
-                textInputAction: TextInputAction.done,
-                onChanged: (_) => setState(() {}),
-                onSubmitted: (_) => _canSave ? _save() : null,
-                decoration: InputDecoration(
-                  hintText: 'Name',
-                  filled: true,
-                  fillColor: AppColors.surface,
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(18),
-                    borderSide: BorderSide.none,
-                  ),
-                  counterStyle: AppText.caption,
-                ),
-              ),
-              const SizedBox(height: 22),
-              Text('Choose an avatar', style: AppText.headline),
-              const SizedBox(height: 10),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  for (var i = 0; i < viewerProfileAvatarIcons.length; i++)
-                    IconButton.filledTonal(
-                      key: ValueKey('profile-editor-avatar-$i'),
-                      tooltip: 'Avatar ${i + 1}',
-                      onPressed: () => setState(() {
-                        _avatar = i;
-                        _photoUrl = null;
-                      }),
-                      style: IconButton.styleFrom(
-                        backgroundColor: _avatar == i
-                            ? AppColors.accentSoft
-                            : AppColors.surface2,
+                    const SizedBox(height: 12),
+                    TextField(
+                      key: const ValueKey('profile-editor-bio'),
+                      controller: _bio,
+                      maxLength: ViewerProfileStore.maxBioLength,
+                      maxLines: 3,
+                      minLines: 2,
+                      onChanged: (_) => setState(() {}),
+                      textCapitalization: TextCapitalization.sentences,
+                      decoration: _fieldDecoration(
+                        label: 'Bio',
+                        hint: 'Add a short bio',
+                        errorText:
+                            _bio.text.trim().runes.length >
+                                ViewerProfileStore.maxBioLength
+                            ? 'Bio is too long'
+                            : null,
                       ),
-                      icon: Icon(
-                        viewerProfileAvatarIcons[i],
-                        color: _avatar == i
-                            ? AppColors.accent
-                            : AppColors.textSecondary,
-                      ),
                     ),
-                ],
+                  ],
+                ),
               ),
-              const SizedBox(height: 18),
+              const SizedBox(height: 14),
+              _editorCard(
+                'profile-editor-cover-card',
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text('Profile cover', style: AppText.headline),
+                              const SizedBox(height: 2),
+                              Text(
+                                'Optional image for your profile',
+                                style: AppText.caption.copyWith(
+                                  color: AppColors.textSecondary,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        Icon(
+                          Icons.image_outlined,
+                          color: AppColors.textSecondary,
+                        ),
+                      ],
+                    ),
+                    if (_coverUrl != null) ...[
+                      const SizedBox(height: 12),
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(18),
+                        child: AspectRatio(
+                          aspectRatio: 2.7,
+                          child: CachedNetworkImage(
+                            imageUrl: _coverUrl!,
+                            fit: BoxFit.cover,
+                            errorWidget: (_, _, _) =>
+                                ColoredBox(color: AppColors.accentSoft),
+                          ),
+                        ),
+                      ),
+                    ],
+                    const SizedBox(height: 10),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 4,
+                      children: [
+                        FilledButton.tonalIcon(
+                          onPressed: _uploading ? null : _pickCover,
+                          icon: const Icon(
+                            Icons.photo_library_outlined,
+                            size: 18,
+                          ),
+                          label: Text(
+                            _coverUrl == null ? 'Add cover' : 'Change cover',
+                          ),
+                        ),
+                        if (_coverUrl != null)
+                          TextButton.icon(
+                            onPressed: _uploading
+                                ? null
+                                : () => setState(() => _coverUrl = null),
+                            icon: const Icon(
+                              Icons.delete_outline_rounded,
+                              size: 18,
+                            ),
+                            label: const Text('Remove cover'),
+                          ),
+                      ],
+                    ),
+                    if (_coverError != null) ...[
+                      const SizedBox(height: 6),
+                      Text(
+                        _coverError!,
+                        style: AppText.caption.copyWith(
+                          color: Theme.of(context).colorScheme.error,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              const SizedBox(height: 14),
               SettingsCard(
+                key: const ValueKey('profile-editor-kids-card'),
+                margin: EdgeInsets.zero,
                 children: [
                   SettingsTile(
                     icon: Icons.child_care_rounded,
@@ -441,9 +696,14 @@ class _ViewerProfileEditorScreenState extends State<ViewerProfileEditorScreen> {
                 ],
               ),
               const SizedBox(height: 10),
-              Text(
-                'Kids profiles hide adult-rated catalogue titles only when ratings are available. This is not a parental lock.',
-                style: AppText.caption.copyWith(color: AppColors.textTertiary),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 4),
+                child: Text(
+                  'Kids profiles hide adult-rated catalogue titles only when ratings are available. This is not a parental lock.',
+                  style: AppText.caption.copyWith(
+                    color: AppColors.textTertiary,
+                  ),
+                ),
               ),
             ],
           ),

@@ -3,7 +3,7 @@ import 'package:watch_app/features/settings/settings_screen.dart';
 import 'package:watch_app/features/shell/root_shell.dart';
 
 void main() {
-  test('phone Profile tab uses the Settings destination', () {
+  test('shared TV rail pages keep Settings at index three', () {
     final pages = buildShellPages(null);
 
     expect(pages, hasLength(4));

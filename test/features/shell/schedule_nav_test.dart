@@ -29,6 +29,7 @@ import 'package:watch_app/core/playback/search_source_prefs.dart';
 import 'package:watch_app/core/profiles/profile_shell_scope.dart';
 import 'package:watch_app/core/profiles/viewer_profile.dart';
 import 'package:watch_app/features/profiles/viewer_profiles_screen.dart';
+import 'package:watch_app/features/profiles/viewer_profile_home_screen.dart';
 import 'package:watch_app/core/provider/cloudstream_provider.dart';
 import 'package:watch_app/core/provider/provider_manager.dart';
 import 'package:watch_app/core/provider/provider_registry.dart';
@@ -456,6 +457,21 @@ void main() {
 
     expect(dockLabel('Schedule'), findsNothing);
     expect(dockLabel('Sources'), findsOneWidget);
+  });
+
+  testWidgets('the phone Profile tab opens the viewer overview', (
+    tester,
+  ) async {
+    sl.registerSingleton<AppMode>(const AppMode(isTv: false));
+    await tester.pumpWidget(wrap(const RootShell()));
+    await tester.pumpAndSettle();
+
+    await tester.tap(dockLabel('Profile'));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(ViewerProfileHomeScreen), findsOneWidget);
+    expect(find.byTooltip('Profile menu'), findsOneWidget);
+    expect(find.text('About'), findsNothing);
   });
 
   testWidgets('profile launch gate hides the entire phone shell', (

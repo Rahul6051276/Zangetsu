@@ -37,15 +37,24 @@ class ProfileAvatarUploader {
         null;
   }
 
-  Future<String?> upload({
+  Future<String?> upload({required Uint8List bytes, required String token}) =>
+      _upload(bytes: bytes, token: token, prepare: _prepareAvatar);
+
+  Future<String?> uploadCover({
     required Uint8List bytes,
     required String token,
+  }) => _upload(bytes: bytes, token: token, prepare: _prepareCover);
+
+  Future<String?> _upload({
+    required Uint8List bytes,
+    required String token,
+    required _AvatarUpload? Function(Uint8List) prepare,
   }) async {
     try {
       final avatar = await compute<Uint8List, _AvatarUpload?>(
-        _prepareAvatar,
+        prepare,
         bytes,
-        debugLabel: 'compress profile avatar',
+        debugLabel: 'compress profile image',
       );
       if (avatar == null) return null;
       final res = await _dio.post<dynamic>(
@@ -107,6 +116,35 @@ class ProfileAvatarUploader {
 }
 
 typedef _AvatarUpload = ({Uint8List bytes, String contentType});
+
+_AvatarUpload? _prepareCover(Uint8List bytes) {
+  if (bytes.isEmpty ||
+      bytes.lengthInBytes > 12 * 1024 * 1024 ||
+      img.findFormatForData(bytes) == img.ImageFormat.gif) {
+    return null;
+  }
+  final decoded = img.decodeImage(bytes);
+  if (decoded == null || decoded.width < 1 || decoded.height < 1) return null;
+  final source = img.bakeOrientation(decoded);
+  final scale = math.min(
+    1.0,
+    math.min(1600 / source.width, 900 / source.height),
+  );
+  for (final fraction in [1.0, 0.85, 0.7, 0.55, 0.4]) {
+    final width = (source.width * scale * fraction).round().clamp(1, 1600);
+    final height = (source.height * scale * fraction).round().clamp(1, 900);
+    final resized = width == source.width && height == source.height
+        ? source
+        : img.copyResize(source, width: width, height: height);
+    for (final quality in [88, 78, 68, 58]) {
+      final output = img.encodeJpg(resized, quality: quality);
+      if (output.lengthInBytes <= ProfileAvatarUploader.maxAvatarBytes) {
+        return (bytes: output, contentType: 'image/jpeg');
+      }
+    }
+  }
+  return null;
+}
 
 _AvatarUpload? _prepareAvatar(Uint8List bytes) {
   if (img.findFormatForData(bytes) == img.ImageFormat.gif) {
