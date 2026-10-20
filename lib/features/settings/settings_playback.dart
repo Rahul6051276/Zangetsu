@@ -131,83 +131,6 @@ class _PlaybackSettingsScreenState extends State<PlaybackSettingsScreen> {
     if (mounted) setState(() {});
   }
 
-  Future<void> _pickPlayerInfo() async {
-    final selected = _prefs.playerInfoFields.toSet();
-    await showModalBottomSheet<void>(
-      context: context,
-      backgroundColor: AppColors.surface,
-      isScrollControlled: true,
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setSheet) => SafeArea(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                margin: const EdgeInsets.only(top: 12, bottom: 8),
-                width: 36,
-                height: 4,
-                decoration: BoxDecoration(
-                  color: AppColors.textTertiary.withValues(alpha: 0.5),
-                  borderRadius: BorderRadius.circular(2),
-                ),
-              ),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(20, 4, 20, 2),
-                child: Align(
-                  alignment: AlignmentDirectional.centerStart,
-                  child: Text(context.l10n.playerInfoOverlay, style: AppText.headline),
-                ),
-              ),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
-                child: Align(
-                  alignment: AlignmentDirectional.centerStart,
-                  child: Text(
-                    context.l10n.pickWhatShowsOverVideo,
-                    style: AppText.caption,
-                  ),
-                ),
-              ),
-              const Divider(color: AppColors.hairline, height: 1),
-              Flexible(
-                child: SingleChildScrollView(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      for (final f in kPlayerInfoFields)
-                        CheckboxListTile(
-                          value: selected.contains(f.$1),
-                          onChanged: (v) => setSheet(() {
-                            if (v == true) {
-                              selected.add(f.$1);
-                            } else {
-                              selected.remove(f.$1);
-                            }
-                          }),
-                          title: Text(f.$2, style: AppText.body),
-                          activeColor: AppColors.accent,
-                          controlAffinity: ListTileControlAffinity.trailing,
-                          dense: true,
-                        ),
-                    ],
-                  ),
-                ),
-              ),
-              const SizedBox(height: 8),
-            ],
-          ),
-        ),
-      ),
-    );
-    final ordered = [
-      for (final f in kPlayerInfoFields)
-        if (selected.contains(f.$1)) f.$1,
-    ];
-    await _prefs.setPlayerInfoFields(ordered);
-    if (mounted) setState(() {});
-  }
-
   static const List<(String, String)> _qualityOptions = [
     ('auto', 'Auto'),
     ('highest', 'Highest'),
@@ -489,6 +412,12 @@ class _PlaybackSettingsScreenState extends State<PlaybackSettingsScreen> {
     final l10n = context.l10n;
     final isTv = sl<AppMode>().isTv;
 
+    final playerDisplayName = _prefs.externalPlayerPackage.isEmpty
+        ? l10n.builtInPlayer
+        : (_prefs.externalPlayerPackage.contains('.')
+            ? _prefs.externalPlayerPackage.split('.').last.toUpperCase()
+            : _prefs.externalPlayerPackage);
+
     return Scaffold(
       appBar: AppBar(
         title: Text(l10n.playback),
@@ -503,16 +432,14 @@ class _PlaybackSettingsScreenState extends State<PlaybackSettingsScreen> {
               SettingsTile(
                 icon: Icons.play_circle_outline,
                 title: l10n.defaultPlayer,
-                subtitle: _prefs.externalPlayerName.isEmpty
-                    ? l10n.builtInPlayer
-                    : _prefs.externalPlayerName,
+                subtitle: playerDisplayName,
                 onTap: _pickPlayer,
               ),
               if (isTv) ...[
                 _toggleRow(
                   icon: Icons.tv,
-                  title: l10n.nativeTvPlayer,
-                  subtitle: l10n.nativeTvPlayerDescription,
+                  title: 'Native TV player',
+                  subtitle: 'Recommended. Turn off only if you prefer the old player',
                   value: _prefs.nativeTvPlayer,
                   onChanged: (v) async {
                     await _prefs.setNativeTvPlayer(v);
@@ -586,25 +513,6 @@ class _PlaybackSettingsScreenState extends State<PlaybackSettingsScreen> {
                   if (mounted) setState(() {});
                 },
               ),
-              _toggleRow(
-                icon: Icons.info_outline,
-                title: l10n.playerInfoOverlay,
-                value: _prefs.playerInfoOverlay,
-                onChanged: (v) async {
-                  await _prefs.setPlayerInfoOverlay(v);
-                  if (mounted) setState(() {});
-                },
-              ),
-              _toggleRow(
-                icon: Icons.label_outline,
-                title: l10n.showQualityLabel,
-                subtitle: l10n.showQualityLabelSubtitle,
-                value: _prefs.showQualityLabel,
-                onChanged: (v) async {
-                  await _prefs.setShowQualityLabel(v);
-                  if (mounted) setState(() {});
-                },
-              ),
             ],
           ),
           const SizedBox(height: 16),
@@ -624,7 +532,7 @@ class _PlaybackSettingsScreenState extends State<PlaybackSettingsScreen> {
               ),
               SettingsTile(
                 icon: Icons.delete_outline,
-                title: l10n.clearVideoCache,
+                title: 'Clear Cache',
                 subtitle: MediaCache.formatBytes(_cacheBytes),
                 onTap: _clearCache,
               ),
