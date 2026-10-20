@@ -66,10 +66,10 @@ class _FakeOrderPrefs implements SourceOrderPrefs {
     _excluded[kind] = ids;
   }
 
-  /// How many the sweep may try. Defaults to [kAutoResolveCap] like the real
+  /// How many the sweep may try. Defaults to [kAutoResolveDefaultCap] like the real
   /// store, so the existing cap tests keep asserting the shipped default; a
   /// test that wants a smaller sweep sets it.
-  int _cap = kAutoResolveCap;
+  int _cap = kAutoResolveDefaultCap;
   @override
   int cap(ZKind kind) => _cap;
   @override
@@ -103,7 +103,7 @@ void main() {
   // every installed source, one at a time. Fails if `.take(kAutoResolveCap)`
   // is ever dropped from `sweepList`.
   test('the cap is real: 20 eligible sources sweep down to 10', () {
-    expect(sweepList(ZKind.anime).length, kAutoResolveCap);
+    expect(sweepList(ZKind.anime).length, kAutoResolveDefaultCap);
   });
 
   // s19 sits last in the incoming pool (`_FakeSources` hands them out in
@@ -130,15 +130,21 @@ void main() {
   // must keep seeing every installed source — only `sweepList` is capped.
   test('orderedCandidates stays whole while sweepList is capped', () {
     expect(orderedCandidates(ZKind.anime).length, 20);
-    expect(sweepList(ZKind.anime).length, kAutoResolveCap);
+    expect(sweepList(ZKind.anime).length, kAutoResolveDefaultCap);
   });
 
-  test('kAutoResolveCap is 10 — the number the screen has always advised', () {
-    expect(kAutoResolveCap, 10);
+  test('a cap of 20 includes sources beyond the former limit', () {
+    orderPrefs.setCap(ZKind.anime, 20);
+    expect(sweepList(ZKind.anime).length, 20);
+  });
+
+  test('Auto Resolve defaults to 10 and permits up to 20 sources', () {
+    expect(kAutoResolveDefaultCap, 10);
+    expect(kAutoResolveCap, 20);
   });
 
   test('the cap is adjustable: set it to 3 and only 3 are swept', () {
-    // 10 is the ceiling, not the rule. Someone who knows their top three
+    // 10 is the default, not the rule. Someone who knows their top three
     // should not wait on seven more before being told nothing has it.
     orderPrefs.setCap(ZKind.anime, 3);
     expect(sweepList(ZKind.anime).length, 3);
@@ -146,7 +152,7 @@ void main() {
     expect(sweepList(ZKind.anime).length, 10);
   });
 
-  test('a cap outside 3..10 is clamped, never honoured', () {
+  test('a cap outside 3..20 is clamped, never honoured', () {
     orderPrefs.setCap(ZKind.anime, 0);
     expect(sweepList(ZKind.anime).length, SourceOrderPrefs.minCap,
         reason: 'zero would mean Auto Resolve never tries anything');

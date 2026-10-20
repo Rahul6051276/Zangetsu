@@ -56,8 +56,8 @@ class _SourcePriorityScreenState extends State<SourcePriorityScreen> {
   ///
   /// This is [sweepCandidates] itself — the sweep's own function, uncapped —
   /// rather than a second implementation that agrees with it by inspection.
-  /// The screen labels its first ten "USED AUTOMATICALLY", which is a claim
-  /// that can be checked; ranking a wider pool here (one that still holds
+  /// The screen marks sources inside the current cap as tried; ranking a wider
+  /// pool here (one that still holds
   /// sources the language filter narrows out, and on TV sources whose runtime
   /// was never loaded) made that claim false for anyone with a language filter
   /// set. One function, one answer.

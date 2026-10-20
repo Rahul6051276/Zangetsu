@@ -290,8 +290,8 @@ List<({String id, String name})> sweepList(ZKind kind) =>
 /// uses instead of building its own. It used to rank a wider pool — one that
 /// still holds sources the language filter narrows out and, on TV, sources
 /// whose runtime was never loaded — so the screen could put a source in its
-/// top ten that the sweep would never attempt, under a heading claiming it was
-/// used automatically. One function, one answer.
+/// sources above the configured cap that the sweep would never attempt, under
+/// a heading claiming they were used automatically. One function, one answer.
 List<({String id, String name})> sweepCandidates(ZKind kind) {
   final narrowed = languageNarrowedCandidates(orderedCandidates(kind), {
     for (final s in sl<SourceRepository>().loadedSources) s.id,

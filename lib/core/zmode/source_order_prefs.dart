@@ -80,7 +80,7 @@ class SourceOrderPrefs {
   /// the whole budget and titles start failing that a fourth would have found.
   static const int minCap = 3;
 
-  /// How many sources the sweep may walk. Defaults to [kAutoResolveCap].
+  /// How many sources the sweep may walk. Defaults to [kAutoResolveDefaultCap].
   ///
   /// Stored as a one-element list because this box is a `Box<List>` — the same
   /// box the orders live in, so there is one entry in settings backup rather
@@ -90,7 +90,7 @@ class SourceOrderPrefs {
     final raw = _box.get(_capKey(kind));
     final first = (raw == null || raw.isEmpty) ? null : raw.first;
     final n = first is int ? first : int.tryParse('$first');
-    return (n ?? kAutoResolveCap).clamp(minCap, kAutoResolveCap);
+    return (n ?? kAutoResolveDefaultCap).clamp(minCap, kAutoResolveCap);
   }
 
   Future<void> setCap(ZKind kind, int n) =>
@@ -168,7 +168,8 @@ List<({String id, String name})> activeSources(
 /// cap costs nothing on the common case — it bounds the miss, which is the
 /// case that used to walk every installed source. The number is the same one
 /// the Source Priority screen has advised in prose since it was written.
-const int kAutoResolveCap = 10;
+const int kAutoResolveDefaultCap = 10;
+const int kAutoResolveCap = 20;
 
 /// Plays past this many stop separating two sources.
 ///
@@ -202,7 +203,7 @@ List<({String id, String name})> rankByRecord(
   List<({String id, String name})> pool,
   SourceRecord Function(String id) recordOf, {
   int trialSlots = 1,
-  int cap = kAutoResolveCap,
+  int cap = kAutoResolveDefaultCap,
 }) {
   // Decorate-sort-undecorate on the incoming index, so ties keep pool order.
   final indexed = [

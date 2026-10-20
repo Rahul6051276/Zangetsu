@@ -26,6 +26,17 @@ void main() {
     expect(prefs.get(ZKind.anime), isEmpty);
   });
 
+  test('the source cap defaults to 10 and can be raised to 20', () async {
+    expect(prefs.cap(ZKind.anime), 10);
+    await prefs.setCap(ZKind.anime, 20);
+    expect(prefs.cap(ZKind.anime), 20);
+  });
+
+  test('an existing cap of 10 remains unchanged', () async {
+    await prefs.setCap(ZKind.anime, 10);
+    expect(prefs.cap(ZKind.anime), 10);
+  });
+
   test('dragging saves an order; reset clears it and automatic returns',
       () async {
     await prefs.set(ZKind.anime, ['b', 'a']);
