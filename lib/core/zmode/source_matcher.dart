@@ -18,22 +18,28 @@ class NoSourceMatch implements Exception {
   });
   final ZCanonical canonical;
 
+  /// What each candidate did, when this came from a full sweep. Empty when
+  /// there was nothing to ask. See `sweepFailureDetail`.
   final List<({String sourceId, String name, SweepReason reason})> outcomes;
+
+  /// Set when a user-selected source alone was checked.
   final String? selectedSourceName;
 
   @override
   String toString() => 'No installed source has $canonical';
 }
 
-/// Thrown when a title's matched source has no episode with this number.
+/// Thrown when a title's matched source has no episode with this number —
+/// the show was found, this episode was not.
 class EpisodeNotOnSource implements Exception {
   const EpisodeNotOnSource(this.canonical, this.episode);
   final ZCanonical canonical;
   final int episode;
   @override
-  String toString() => 'Episode $episode is not on the source for $canonical';
+  String toString() => 'Episode $episode is not on the source for$canonical';
 }
 
+/// Finds the source show behind a metadata title, one source at a time.
 class SourceMatcher {
   SourceMatcher({
     required SourceRepository sources,
@@ -51,11 +57,13 @@ class SourceMatcher {
   final MatchStore _store;
   final ZSourcePrefs _prefs;
   final List<({String id, String name})> Function(ZKind) _candidates;
-  final List<({String id, String name})> Function(ZKind)? _sweepCandidates;
+  final List<({String id, String name})> Function(ZKind) _sweepCandidates;
 
   void Function(ZCanonical)? _onSourceChanged;
 
   void bindSourceChanged(void Function(ZCanonical) fn) => _onSourceChanged = fn;
+
+  void _sourceChanged(ZCanonical c) => _onSourceChanged?.call(c);
 
   SourceMatch? saved(ZCanonical c) {
     final sel = sourceForTitle(c);
@@ -63,29 +71,83 @@ class SourceMatcher {
   }
 
   String? sourceForTitle(ZCanonical c) {
-    return pinnedSource(c) ?? _prefs.get(c.kind);
+    return _prefs.pinnedForTitle(c) ?? _prefs.get(c.kind);
   }
 
-  String? pinnedSource(ZCanonical c) {
-    final matches = _store.matchesFor(c);
-    for (final m in matches) {
-      if (m.pinned) return m.sourceId;
+  String? pinnedSource(ZCanonical c) => _prefs.pinnedForTitle(c);
+
+  Future<void> chooseSource(ZCanonical c, String? sourceId) async {
+    if (sourceId == null) {
+      await clearAuto(c);
+    } else {
+      await _prefs.setPinnedForTitle(c, sourceId);
+      _sourceChanged(c);
     }
+  }
+
+  Future<void> clearAuto(ZCanonical c) async {
+    await _prefs.clearPinnedForTitle(c);
+    _sourceChanged(c);
+  }
+
+  Future<SourceMatch?> pinTitleToSource(
+    ZCanonical c,
+    String sourceId, {
+    required String title,
+    String? altTitle,
+    List<String> metadataAliases = const [],
+    int? malId,
+  }) async {
+    await _prefs.setPinnedForTitle(c, sourceId);
+    final m = await resolveOn(
+      c,
+      sourceId,
+      title: title,
+      altTitle: altTitle,
+      metadataAliases: metadataAliases,
+      malId: malId,
+    );
+    if (m != null) {
+      final pinnedMatch = SourceMatch(
+        sourceId: m.sourceId,
+        showUrl: m.showUrl,
+        showId: m.showId,
+        showTitle: m.showTitle,
+        pinned: true,
+      );
+      await _store.save(c, pinnedMatch);
+      _sourceChanged(c);
+      return pinnedMatch;
+    }
+    _sourceChanged(c);
     return null;
   }
 
-  Future<void> selectSource(ZKind kind, String sourceId) async {
-    await _prefs.set(kind, sourceId);
+  Future<void> pinManual(ZCanonical c, MediaItem item) async {
+    await _prefs.setPinnedForTitle(c, item.sourceId);
+    final m = SourceMatch(
+      sourceId: item.sourceId,
+      showUrl: item.url,
+      showId: item.id,
+      showTitle: item.title,
+      pinned: true,
+    );
+    await _store.save(c, m);
+    _sourceChanged(c);
   }
 
-  /// Strip years, brackets, tags, and symbols for cleaner provider search
+  Future<void> pinForTitle(ZCanonical c, MediaItem item) => pinManual(c, item);
+
+  String? cfBlockedUrl(ZKind kind) => null;
+
+  /// Clean title of years, tags, brackets for clean provider queries
   static String _cleanSearchTitle(String raw) {
     return raw
-        .replaceAll(RegExp(r'\(\s*\d{4}\s*\)'), '') // Removes (2026)
-        .replaceAll(RegExp(r'\[.*?\]'), '')         // Removes [Tags]
-        .replaceAll(RegExp(r'\b(19|20)\d{2}\b'), '') // Removes bare 4-digit years
-        .replaceAll(RegExp(r'[:\-_\.]'), ' ')       // Replaces separators with space
-        .replaceAll(RegExp(r'\s+'), ' ')            // Collapses spaces
+        .replaceAll(RegExp(r'\(\s*\d{4}\s*\)'), '')
+        .replaceAll(RegExp(r'\[.*?\]'), '')
+        .replaceAll(RegExp(r'\b(19|20)\d{2}\b'), '')
+        .replaceAll(RegExp(r'[:\-_\.]'), ' ')
+        .replaceAll(RegExp(r'\s+'), ' ')
         .trim();
   }
 
@@ -106,7 +168,10 @@ class SourceMatcher {
     bool Function()? abandoned,
   }) async {
     final loaded = await _sources.ensureSourceLoaded(sourceId);
-    if (!loaded) return null;
+    if (!loaded) {
+      debugPrint('[source-matcher] resolveOn · $sourceId → null (ensureSourceLoaded failed)');
+      return null;
+    }
 
     Future<List<MediaItem>?> searchFor(String q) async {
       if (abandoned?.call() ?? false) return null;
@@ -122,24 +187,28 @@ class SourceMatcher {
             CfSolveNeeded.needsSolve(host, e.url, sourceId: sourceId);
           }
         }
+        debugPrint('[zmode] $sourceId search THREW for "$q": $e');
         return null;
       }
     }
 
-    final cleaned = _cleanSearchTitle(title);
-    final queriesToTry = <String>{
-      cleaned,
+    final cleanedTitle = _cleanSearchTitle(title);
+    final queries = <String>{
+      cleanedTitle,
       title,
       if (altTitle != null && altTitle.trim().isNotEmpty) ...[
         _cleanSearchTitle(altTitle),
         altTitle.trim(),
       ],
-      ...metadataAliases.map(_cleanSearchTitle).where((s) => s.isNotEmpty),
-    }.toList();
+      for (final a in metadataAliases) ...[
+        _cleanSearchTitle(a),
+        a.trim(),
+      ],
+    }.where((q) => q.isNotEmpty).toList();
 
     MediaItem? matchedItem;
 
-    for (final q in queriesToTry) {
+    for (final q in queries) {
       if (abandoned?.call() ?? false) return null;
       final results = await searchFor(q);
       if (results == null || results.isEmpty) continue;
@@ -164,9 +233,8 @@ class SourceMatcher {
         break;
       }
 
-      // Fuzzy matching fallback
       for (final item in results) {
-        if (_fuzzyMatchTitle(item.title, cleaned) ||
+        if (_fuzzyMatchTitle(item.title, cleanedTitle) ||
             (altTitle != null && _fuzzyMatchTitle(item.title, _cleanSearchTitle(altTitle)))) {
           matchedItem = item;
           break;
@@ -322,7 +390,19 @@ class SourceMatcher {
       );
     }
 
-    final sweep = _sweepCandidates?.call(c.kind) ?? _candidates(c.kind);
+    final sweep = _sweepCandidates(c.kind);
+    final isReading = c.kind == ZKind.manga || c.kind == ZKind.novel;
+    final remembered = isReading ? _prefs.lastGood(c.kind) : null;
+    if (remembered != null && sweep.any((s) => s.id == remembered)) {
+      return matchOn(
+        c,
+        remembered,
+        title: title,
+        altTitle: altTitle,
+        metadataAliases: metadataAliases,
+        malId: malId,
+      );
+    }
 
     for (var i = 0; i < sweep.length; i++) {
       if (abandoned?.call() ?? false) return null;
