@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:io';
 import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -24,14 +23,12 @@ import 'tv_av_native_player.dart';
 import 'tv_exo_player_screen.dart';
 import 'tv_native_player.dart';
 
-/// Which TV player backend to use.
 enum TvPlayerKind {
   avPlayerSystem,
   nativeExo,
   exoView,
 }
 
-/// Allow auto-hop up to 15 dead sources on TV so playback never aborts early.
 const int kMaxTvSourceHops = 15;
 
 TvPlayerKind tvPlayerKind({
@@ -57,7 +54,6 @@ Future<bool> ensureTvPlaybackSourcesOrPrompt(
   return false;
 }
 
-/// Attempts to launch an external player (Just Player / VLC / MX Player) if selected.
 Future<bool> _launchInExternalPlayer({
   required String videoUrl,
   required String title,
@@ -74,25 +70,6 @@ Future<bool> _launchInExternalPlayer({
   } catch (e) {
     debugPrint('[tv-playback] External player check/launch skipped: $e');
     return false;
-  }
-}
-
-/// Fast pre-check: verifies if a stream URL is reachable so dead links are skipped instantly.
-Future<bool> _isStreamReachable(String url, Map<String, String>? headers) async {
-  if (url.startsWith('file://') || url.startsWith('content://')) return true;
-  try {
-    final uri = Uri.tryParse(url);
-    if (uri == null || !uri.hasScheme) return false;
-    final client = HttpClient()
-      ..connectionTimeout = const Duration(seconds: 4);
-    final request = await client.headUrl(uri);
-    headers?.forEach((k, v) => request.headers.set(k, v));
-    final response = await request.close().timeout(const Duration(seconds: 4));
-    // 200, 206 (Partial Content), 302, 301 are healthy
-    return response.statusCode >= 200 && response.statusCode < 400;
-  } catch (_) {
-    // If HEAD is blocked by server/WAF, don't discard, give it a chance
-    return true;
   }
 }
 
@@ -162,7 +139,6 @@ Future<void> launchTvPlayback({
 
   TvPlaybackLoadFailure? resolveFailure;
 
-  // Robust Resolver: filters out completely dead links and sorts healthy ones first
   Future<List<VideoSource>> trackedResolve(String url) async {
     debugPrint('[tv-playback] resolveSources starting for $url');
     try {
@@ -174,7 +150,6 @@ Future<void> launchTvPlayback({
         return [];
       }
 
-      // Check stream health so internal player does not freeze on dead index 0
       final validStreams = <VideoSource>[];
       for (final s in rawStreams) {
         if (s.url.trim().isNotEmpty) {
@@ -201,19 +176,51 @@ Future<void> launchTvPlayback({
   }
 
   try {
-    // 1. Resolve episode streams
     final currentEpUrl = (startIndex >= 0 && startIndex < episodes.length)
         ? episodes[startIndex].url
         : '';
     final resolvedStreams = await trackedResolve(currentEpUrl);
 
-    // If no streams, jump immediately to next candidate provider without failing
     if (resolvedStreams.isEmpty) {
-      throw const EpisodeNotAvailable();
+      if (sourceHop < kMaxTvSourceHops && context.mounted) {
+        await launchTvPlayback(
+          context: context,
+          sourceId: sourceId,
+          episodes: episodes,
+          startIndex: startIndex,
+          resume: resume,
+          resolveSources: resolveSources,
+          showUrl: showUrl,
+          showTitle: showTitle,
+          cover: cover,
+          coverHeaders: coverHeaders,
+          category: category,
+          availableCategories: availableCategories,
+          malId: malId,
+          scrobbleTitle: scrobbleTitle,
+          tmdbId: tmdbId,
+          tmdbIsTv: tmdbIsTv,
+          imdbId: imdbId,
+          listItem: listItem,
+          sourceHop: sourceHop + 1,
+          skipOverlay: true,
+        );
+        return;
+      }
+      if (context.mounted) {
+        await showTvPlaybackLoadError(
+          context,
+          failure: resolveFailure ??
+              const TvPlaybackLoadFailure(
+                TvPlaybackLoadFailureKind.episodeNotAvailable,
+              ),
+        );
+      }
+      return;
     }
 
-    // 2. Try External Player if user configured/installed it
-    if (!isAppleTv) {
+    // Try External Player first if chosen or available
+    if (!isAppleTv && prefs.externalPlayerPackage.isNotEmpty) {
       for (final stream in resolvedStreams) {
         final externalLaunched = await _launchInExternalPlayer(
           videoUrl: stream.url,
@@ -228,7 +235,6 @@ Future<void> launchTvPlayback({
       }
     }
 
-    // 3. Apple TV System Player
     if (kind == TvPlayerKind.avPlayerSystem) {
       TvAvNativePlayer.lastFailure = null;
       final started = await TvAvNativePlayer.play(
@@ -264,7 +270,6 @@ Future<void> launchTvPlayback({
       return;
     }
 
-    // 4. Android TV Native ExoPlayer with Automated Multi-Link Failover
     if (kind == TvPlayerKind.nativeExo) {
       TvNativePlayer.lastFailure = null;
       TvNativePlayer.lastPlaybackErrorCode = null;
@@ -290,18 +295,14 @@ Future<void> launchTvPlayback({
 
       final errorCode = TvNativePlayer.lastPlaybackErrorCode;
 
-      // If playback failed or threw an error, silently hop to the next link/source
       if (!started || errorCode != null) {
         debugPrint(
-          '[tv-playback] Stream failed on ExoPlayer (code=$errorCode). Attempting auto-hop...',
+          '[tv-playback] Stream failed on ExoPlayer (code=$errorCode). Auto-hop...',
         );
         dismissLoading?.call();
 
         final isZm = (showUrl != null && ZmodeIds.isZ(showUrl));
         if (isZm && sourceHop < kMaxTvSourceHops && context.mounted) {
-          debugPrint(
-            '[tv-playback] Auto-switching to next stream candidate (${sourceHop + 1}/$kMaxTvSourceHops)',
-          );
           await launchTvPlayback(
             context: context,
             sourceId: sourceId,
@@ -327,7 +328,6 @@ Future<void> launchTvPlayback({
           return;
         }
 
-        // If all hops exhausted, give user the dialog
         if (context.mounted) {
           await _handleTvPlaybackFailure(
             context,
@@ -362,7 +362,6 @@ Future<void> launchTvPlayback({
       return;
     }
 
-    // 5. Fallback ExoPlayer View
     await Navigator.of(context).push<void>(
       MaterialPageRoute<void>(
         builder: (_) => TvExoPlayerScreen(
@@ -386,38 +385,6 @@ Future<void> launchTvPlayback({
       ),
     );
   } on NoSourceMatch catch (e) {
-    if (sourceHop < kMaxTvSourceHops && context.mounted) {
-      await launchTvPlayback(
-        context: context,
-        sourceId: sourceId,
-        episodes: episodes,
-        startIndex: startIndex,
-        resume: resume,
-        resolveSources: resolveSources,
-        showUrl: showUrl,
-        showTitle: showTitle,
-        cover: cover,
-        coverHeaders: coverHeaders,
-        category: category,
-        availableCategories: availableCategories,
-        malId: malId,
-        scrobbleTitle: scrobbleTitle,
-        tmdbId: tmdbId,
-        tmdbIsTv: tmdbIsTv,
-        imdbId: imdbId,
-        listItem: listItem,
-        sourceHop: sourceHop + 1,
-        skipOverlay: true,
-      );
-      return;
-    }
-    if (context.mounted) {
-      await showTvPlaybackLoadError(
-        context,
-        failure: classifyPlaybackError(e, mode: mode),
-      );
-    }
-  } on EpisodeNotAvailable catch (e) {
     if (sourceHop < kMaxTvSourceHops && context.mounted) {
       await launchTvPlayback(
         context: context,
