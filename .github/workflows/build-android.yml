@@ -1,4 +1,4 @@
-name: Build Zangetsu Android TV APK
+name: Build Zangetsu APK (Phone & TV)
 
 on:
   workflow_dispatch:
@@ -7,8 +7,8 @@ permissions:
   contents: write
 
 jobs:
-  build-tv:
-    name: Build Official TV APK
+  build:
+    name: Build Official APKs
     runs-on: ubuntu-latest
 
     steps:
@@ -20,6 +20,7 @@ jobs:
         with:
           distribution: 'temurin'
           java-version: '17'
+          cache: 'gradle'
 
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
@@ -27,27 +28,44 @@ jobs:
           channel: 'stable'
           cache: true
 
+      - name: Cache NDK & CMake
+        uses: actions/cache@v4
+        with:
+          path: |
+            /usr/local/lib/android/sdk/ndk
+            /usr/local/lib/android/sdk/cmake
+          key: ${{ runner.os }}-android-ndk-cmake-r28c
+          restore-keys: |
+            ${{ runner.os }}-android-ndk-cmake-
+
       - name: Install Dependencies
         run: flutter pub get
 
-      - name: Build Android TV Split APKs
+      - name: Build Android Split APKs
         run: flutter build apk --release --split-per-abi
 
-      - name: Prepare TV Release Assets
+      - name: Prepare Release Assets
         run: |
           mkdir -p dist
-          cp build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk dist/Zangetsu-v2.3.2-tv-arm32.apk
+          # TV & Modern Phones (64-bit)
+          cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk dist/Zangetsu-v2.3.2-arm64.apk
+          # TV & Older Phones (32-bit)
+          cp build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk dist/Zangetsu-v2.3.2-arm32.apk
+          # Labels for TV convenience
           cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk dist/Zangetsu-v2.3.2-tv-arm64.apk
+          cp build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk dist/Zangetsu-v2.3.2-tv-arm32.apk
 
-      - name: Create TV Release
+      - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: zangetsu-tv-build-${{ github.run_number }}
-          name: Zangetsu TV Release #${{ github.run_number }}
+          tag_name: zangetsu-build-${{ github.run_number }}
+          name: Zangetsu Release #${{ github.run_number }}
           draft: false
           prerelease: false
           files: |
-            dist/Zangetsu-v2.3.2-tv-arm32.apk
+            dist/Zangetsu-v2.3.2-arm64.apk
+            dist/Zangetsu-v2.3.2-arm32.apk
             dist/Zangetsu-v2.3.2-tv-arm64.apk
+            dist/Zangetsu-v2.3.2-tv-arm32.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
