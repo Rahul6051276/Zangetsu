@@ -13,13 +13,6 @@ import '../../l10n/l10n.dart';
 import '../search/meta_filter_sheet.dart';
 import 'see_all_screen_tv.dart';
 
-/// Full-grid view of a single home row ("See All"). Reuses the home's tap /
-/// long-press handlers so an item opens the same Detail / info card.
-///
-/// When [onLoadMore] is provided the grid paginates: scrolling near the bottom
-/// fetches the next page and appends it (infinite scroll). When it's null the
-/// grid is a fixed list over [items] — byte-for-byte the pre-pagination
-/// behaviour, so search / JS / non-paginating callers are unchanged.
 class SeeAllScreen extends StatefulWidget {
   const SeeAllScreen({
     super.key,
@@ -38,24 +31,13 @@ class SeeAllScreen extends StatefulWidget {
   final List<MediaItem> items;
   final void Function(MediaItem) onTap;
   final void Function(MediaItem)? onLongPress;
-
-  /// Optional per-item poster badges (e.g. SUB/DUB/MOVIE). When null no tags are
-  /// drawn — keeps the home "See All" callers unchanged.
   final List<String> Function(MediaItem)? tagsFor;
-
-  /// Optional next-page fetcher for infinite scroll. `page` is 1-based and the
-  /// initial [items] ARE page 1, so the first call requests page 2. Returning an
-  /// empty list (or only already-seen items) ends pagination. Null → fixed list.
   final Future<List<MediaItem>> Function(int page)? onLoadMore;
-
-  /// Optional query/filter fetcher. When set, the app bar exposes search and
-  /// filters and the grid can be refreshed without leaving this page.
   final Future<MediaItemPage> Function(
     String query,
     MetaFilters filters,
     int page,
-  )?
-  onSearch;
+  )? onSearch;
   final ZKind? filterKind;
   final MetaFilters initialFilters;
 
@@ -64,11 +46,11 @@ class SeeAllScreen extends StatefulWidget {
 }
 
 class _SeeAllScreenState extends State<SeeAllScreen> {
-  late final List<MediaItem> _items = [...widget.items];
+  late final List<MediaItem> _rawItems = [...widget.items];
+  late List<MediaItem> _items = [...widget.items];
   final Set<String> _seen = {};
   final ScrollController _controller = ScrollController();
 
-  /// The last page already loaded — the initial [items] are page 1.
   int _page = 1;
   bool _loading = false;
   bool _end = false;
@@ -97,7 +79,6 @@ class _SeeAllScreenState extends State<SeeAllScreen> {
     super.dispose();
   }
 
-  /// Dedupe key — prefer the stable id, fall back to the url.
   String _keyOf(MediaItem m) => m.id.isNotEmpty ? m.id : m.url;
 
   void _onScroll() {
@@ -106,6 +87,39 @@ class _SeeAllScreenState extends State<SeeAllScreen> {
     if (pos.pixels >= pos.maxScrollExtent * 0.8) {
       _loadMore();
     }
+  }
+
+  void _applyLocalFilters() {
+    final query = _queryController.text.trim().toLowerCase();
+    var filtered = _rawItems.where((item) {
+      if (query.isNotEmpty && !item.title.toLowerCase().contains(query)) {
+        return false;
+      }
+      if (_filters.year != null && _filters.year! > 0) {
+        final yearStr = _filters.year.toString();
+        final releaseMatch = (item.releaseDate ?? '').contains(yearStr);
+        final titleMatch = item.title.contains(yearStr);
+        if (!releaseMatch && !titleMatch) return false;
+      }
+      if (_filters.minScore != null && _filters.minScore! > 0) {
+        final score = double.tryParse(item.score ?? '0') ?? 0;
+        final target = _filters.minScore! > 10 ? _filters.minScore! / 10.0 : _filters.minScore!.toDouble();
+        if (score < target) return false;
+      }
+      return true;
+    }).toList();
+
+    if (_filters.sort == MetaSort.score) {
+      filtered.sort((a, b) {
+        final sa = double.tryParse(a.score ?? '0') ?? 0;
+        final sb = double.tryParse(b.score ?? '0') ?? 0;
+        return sb.compareTo(sa);
+      });
+    }
+
+    setState(() {
+      _items = filtered;
+    });
   }
 
   Future<void> _loadMore() async {
@@ -145,21 +159,29 @@ class _SeeAllScreenState extends State<SeeAllScreen> {
       if (searchPage != null) {
         _page += 1;
         _items.addAll(fresh);
+        _rawItems.addAll(fresh);
         _end = !searchPage.hasMore;
         _showNextPage = searchPage.hasMore;
       } else if (fresh.isEmpty) {
-        // Nothing new (empty page or all duplicates) → we've hit the end.
         _end = true;
       } else {
-        _items.addAll(fresh);
+        _rawItems.addAll(fresh);
         _page += 1;
+        if (_queryController.text.isNotEmpty || !_filters.isEmpty) {
+          _applyLocalFilters();
+        } else {
+          _items.addAll(fresh);
+        }
       }
     });
   }
 
   Future<void> _runQuery(String query) async {
-    final search = widget.onSearch;
-    if (search == null) return;
+    if (widget.onSearch == null) {
+      _applyLocalFilters();
+      return;
+    }
+    final search = widget.onSearch!;
     final generation = ++_queryGeneration;
     setState(() {
       _items.clear();
@@ -189,11 +211,10 @@ class _SeeAllScreenState extends State<SeeAllScreen> {
   }
 
   Future<void> _openFilters() async {
-    final kind = widget.filterKind;
-    if (kind == null) return;
+    final effectiveKind = widget.filterKind ?? ZKind.movie;
     final picked = await showMetaFilterSheet(
       context,
-      kind,
+      effectiveKind,
       _filters,
       showStatus: false,
     );
@@ -225,14 +246,14 @@ class _SeeAllScreenState extends State<SeeAllScreen> {
         tagsFor: widget.tagsFor,
         onLoadMore: widget.onLoadMore,
         onSearch: widget.onSearch,
-        filterKind: widget.filterKind,
+        filterKind: widget.filterKind ?? ZKind.movie,
         initialFilters: widget.initialFilters,
       );
     }
     final cellW = posterGridCellWidth(context);
     final paginating = widget.onLoadMore != null || widget.onSearch != null;
-    // A trailing spinner cell spanning the full row while a page is loading.
     final showSpinner = paginating && _loading;
+
     return Scaffold(
       backgroundColor: AppColors.bg,
       appBar: AppBar(
@@ -249,32 +270,33 @@ class _SeeAllScreenState extends State<SeeAllScreen> {
                   border: InputBorder.none,
                   isDense: true,
                 ),
+                onChanged: (val) {
+                  if (widget.onSearch == null) _applyLocalFilters();
+                },
                 onSubmitted: _runQuery,
               )
             : Text(widget.title, style: AppText.headline),
-        actions: widget.onSearch == null
-            ? null
-            : [
-                IconButton(
-                  key: const ValueKey('see-all-search'),
-                  tooltip: context.l10n.search2,
-                  onPressed: _toggleSearch,
-                  icon: Icon(
-                    _searching ? Icons.close_rounded : Icons.search_rounded,
-                  ),
-                ),
-                IconButton(
-                  key: const ValueKey('see-all-filter'),
-                  tooltip: context.l10n.filters,
-                  onPressed: _openFilters,
-                  icon: Icon(
-                    Icons.filter_list_rounded,
-                    color: _filters.isEmpty ? null : AppColors.accent,
-                  ),
-                ),
-              ],
+        actions: [
+          IconButton(
+            key: const ValueKey('see-all-search'),
+            tooltip: context.l10n.search2,
+            onPressed: _toggleSearch,
+            icon: Icon(
+              _searching ? Icons.close_rounded : Icons.search_rounded,
+            ),
+          ),
+          IconButton(
+            key: const ValueKey('see-all-filter'),
+            tooltip: context.l10n.filters,
+            onPressed: _openFilters,
+            icon: Icon(
+              Icons.filter_list_rounded,
+              color: _filters.isEmpty ? null : AppColors.accent,
+            ),
+          ),
+        ],
       ),
-      body: widget.onSearch != null && _items.isEmpty
+      body: _items.isEmpty
           ? Center(
               child: Column(
                 mainAxisSize: MainAxisSize.min,
@@ -331,8 +353,6 @@ class _SeeAllScreenState extends State<SeeAllScreen> {
                 );
               },
             ),
-      // Bottom loading indicator while the next page is in flight. Only rendered
-      // in the paginating configuration, so non-paginating callers are unchanged.
       bottomNavigationBar: showSpinner && _items.isNotEmpty
           ? const SizedBox(
               height: 48,
