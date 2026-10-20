@@ -10,6 +10,7 @@ import '../../l10n/l10n.dart';
 import '../home/search_screen.dart';
 import 'browse_source_screen.dart';
 import 'browse_sources_list.dart';
+import '../sources/providers_hub_screen.dart';
 
 /// Entry point for browsing installed sources without disturbing Home's
 /// active source, reached from Home's header action while Z Mode is on (see
@@ -49,6 +50,10 @@ class _BrowseSourcesScreenState extends State<BrowseSourcesScreen>
     SourceListKind.novel => ContentMode.novel,
   };
 
+  void _openProviders() => Navigator.of(
+    context,
+  ).push(MaterialPageRoute<void>(builder: (_) => const ProvidersHubScreen()));
+
   @override
   void dispose() {
     _controller.dispose();
@@ -68,8 +73,15 @@ class _BrowseSourcesScreenState extends State<BrowseSourcesScreen>
       backgroundColor: AppColors.bg,
       appBar: AppBar(
         backgroundColor: AppColors.bg,
+        surfaceTintColor: Colors.transparent,
         title: Text(context.l10n.sources, style: AppText.headline),
         actions: [
+          IconButton(
+            key: const ValueKey('browse-sources-providers'),
+            icon: const Icon(Icons.tune_rounded),
+            tooltip: context.l10n.providers,
+            onPressed: _openProviders,
+          ),
           IconButton(
             icon: const Icon(Icons.search_rounded),
             tooltip: context.l10n.search,
@@ -86,36 +98,44 @@ class _BrowseSourcesScreenState extends State<BrowseSourcesScreen>
             ),
           ),
         ],
-        bottom: TabBar(
-          controller: _tab,
-          // Drop the default full-width hairline under the bar — same
-          // treatment as History's tabs.
-          dividerColor: Colors.transparent,
-          dividerHeight: 0,
-          indicatorSize: TabBarIndicatorSize.label,
-          indicator: UnderlineTabIndicator(
-            borderRadius: const BorderRadius.all(Radius.circular(2)),
-            borderSide: BorderSide(width: 3, color: AppColors.accent),
-            insets: const EdgeInsets.symmetric(horizontal: -6),
-          ),
-          labelColor: AppColors.accent,
-          unselectedLabelColor: AppColors.textSecondary,
-          overlayColor: WidgetStateProperty.all(Colors.transparent),
-          tabs: [
-            Tab(text: context.l10n.modeStreaming),
-            Tab(text: context.l10n.modeManga),
-            Tab(text: context.l10n.modeNovel),
-          ],
-        ),
       ),
       body: Column(
         children: [
           Padding(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                color: AppColors.surface,
+                borderRadius: BorderRadius.circular(16),
+              ),
+              child: TabBar(
+                controller: _tab,
+                dividerColor: Colors.transparent,
+                dividerHeight: 0,
+                indicatorSize: TabBarIndicatorSize.tab,
+                indicator: BoxDecoration(
+                  color: AppColors.accentSoft,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                labelColor: AppColors.accent,
+                unselectedLabelColor: AppColors.textSecondary,
+                labelStyle: AppText.body.copyWith(fontWeight: FontWeight.w600),
+                overlayColor: WidgetStateProperty.all(Colors.transparent),
+                tabs: [
+                  Tab(height: 44, text: context.l10n.modeStreaming),
+                  Tab(height: 44, text: context.l10n.modeManga),
+                  Tab(height: 44, text: context.l10n.modeNovel),
+                ],
+              ),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
             child: DecoratedBox(
               decoration: BoxDecoration(
                 color: AppColors.surface2,
-                borderRadius: BorderRadius.circular(12),
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: AppColors.hairline),
               ),
               child: Row(
                 children: [
@@ -136,11 +156,13 @@ class _BrowseSourcesScreenState extends State<BrowseSourcesScreen>
                       cursorColor: AppColors.accent,
                       decoration: InputDecoration(
                         hintText: context.l10n.searchSources,
-                        hintStyle: AppText.body,
+                        hintStyle: AppText.body.copyWith(
+                          color: AppColors.textTertiary,
+                        ),
                         border: InputBorder.none,
                         isDense: true,
                         contentPadding: const EdgeInsets.symmetric(
-                          vertical: 14,
+                          vertical: 15,
                         ),
                       ),
                     ),
