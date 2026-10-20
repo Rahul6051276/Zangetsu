@@ -18,25 +18,20 @@ class NoSourceMatch implements Exception {
   });
   final ZCanonical canonical;
 
-  /// What each candidate did, when this came from a full sweep. Empty when
-  /// there was nothing to ask. See `sweepFailureDetail`.
   final List<({String sourceId, String name, SweepReason reason})> outcomes;
-
-  /// Set when a user-selected source alone was checked.
   final String? selectedSourceName;
 
   @override
   String toString() => 'No installed source has $canonical';
 }
 
-/// Thrown when a title's matched source has no episode with this number —
-/// the show was found, this episode was not.
+/// Thrown when a title's matched source has no episode with this number.
 class EpisodeNotOnSource implements Exception {
   const EpisodeNotOnSource(this.canonical, this.episode);
   final ZCanonical canonical;
   final int episode;
   @override
-  String toString() => 'Episode $episode is not on the source for$canonical';
+  String toString() => 'Episode $episode is not on the source for $canonical';
 }
 
 /// Finds the source show behind a metadata title, one source at a time.
@@ -97,10 +92,6 @@ class SourceMatcher {
   }
 
   Future<void> clearAuto(ZCanonical c) async {
-    final sel = _prefs.get(c.kind);
-    if (sel != null) {
-      await _store.delete(c, sel);
-    }
     _sourceChanged(c);
   }
 
