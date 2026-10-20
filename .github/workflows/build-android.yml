@@ -30,13 +30,14 @@ jobs:
       - name: Install Dependencies
         run: flutter pub get
 
-      - name: Build Android TV Release APK
-        run: flutter build apk --release
+      - name: Build Android TV Split APKs
+        run: flutter build apk --release --split-per-abi
 
-      - name: Prepare TV APK Asset
+      - name: Prepare TV Release Assets
         run: |
           mkdir -p dist
-          cp build/app/outputs/flutter-apk/app-release.apk dist/Zangetsu-v2.3.2-tv.apk
+          cp build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk dist/Zangetsu-v2.3.2-tv-arm32.apk
+          cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk dist/Zangetsu-v2.3.2-tv-arm64.apk
 
       - name: Create TV Release
         uses: softprops/action-gh-release@v2
@@ -46,6 +47,7 @@ jobs:
           draft: false
           prerelease: false
           files: |
-            dist/Zangetsu-v2.3.2-tv.apk
+            dist/Zangetsu-v2.3.2-tv-arm32.apk
+            dist/Zangetsu-v2.3.2-tv-arm64.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
