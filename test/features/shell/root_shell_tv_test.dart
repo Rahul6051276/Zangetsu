@@ -739,11 +739,10 @@ void main() {
       final fieldFocus = tester.binding.focusManager.primaryFocus;
       expect(fieldFocus, isNotNull);
       expect(fieldFocus?.nearestScope?.debugLabel, 'tv-content-scope');
+      // Rail stays visible as the narrow icon strip while content is focused.
       expect(
-        tester
-            .widget<AnimatedSlide>(find.byKey(const ValueKey('tv-nav-slide')))
-            .offset,
-        const Offset(-1, 0),
+        tester.getSize(find.byKey(const ValueKey('tv-nav-slide'))).width,
+        moreOrLessEquals(74),
       );
 
       // arrowLeft → _onContentKey drops back onto the current page's rail
@@ -754,11 +753,10 @@ void main() {
         tester.binding.focusManager.primaryFocus?.nearestScope?.debugLabel,
         'tv-rail-scope',
       );
+      // Focus in the rail expands it into the labelled drawer.
       expect(
-        tester
-            .widget<AnimatedSlide>(find.byKey(const ValueKey('tv-nav-slide')))
-            .offset,
-        Offset.zero,
+        tester.getSize(find.byKey(const ValueKey('tv-nav-slide'))).width,
+        moreOrLessEquals(224),
       );
 
       // arrowRight → _onRailKey hands focus back to the last-focused content
@@ -767,10 +765,8 @@ void main() {
       await tester.pumpAndSettle();
       expect(tester.binding.focusManager.primaryFocus, same(fieldFocus));
       expect(
-        tester
-            .widget<AnimatedSlide>(find.byKey(const ValueKey('tv-nav-slide')))
-            .offset,
-        const Offset(-1, 0),
+        tester.getSize(find.byKey(const ValueKey('tv-nav-slide'))).width,
+        moreOrLessEquals(74),
       );
     },
   );
