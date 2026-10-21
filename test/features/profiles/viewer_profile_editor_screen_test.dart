@@ -3,14 +3,18 @@ import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:get_it/get_it.dart';
+import 'package:dio/dio.dart';
+import 'package:watch_app/core/profiles/klipy_gif_service.dart';
 import 'package:watch_app/core/profiles/viewer_profile.dart';
 import 'package:watch_app/core/supabase/auth_user.dart';
+import 'package:watch_app/core/theme/app_colors.dart';
 import 'package:watch_app/features/auth/auth_cubit.dart';
 import 'package:watch_app/features/profiles/viewer_profile_editor_screen.dart';
 
 Widget _profileEditorHost(
   ValueChanged<ProfileEditorResult?> onResult, {
   ViewerProfile editingProfile = profile,
+  KlipyGifService? klipyGifService,
 }) => MaterialApp(
   home: Builder(
     builder: (context) => Scaffold(
@@ -19,8 +23,10 @@ Widget _profileEditorHost(
           Navigator.of(context)
               .push<ProfileEditorResult>(
                 MaterialPageRoute<ProfileEditorResult>(
-                  builder: (_) =>
-                      ViewerProfileEditorScreen(profile: editingProfile),
+                  builder: (_) => ViewerProfileEditorScreen(
+                    profile: editingProfile,
+                    klipyGifService: klipyGifService,
+                  ),
                 ),
               )
               .then(onResult);
@@ -224,7 +230,8 @@ void main() {
     await tester.tap(find.text('Open editor'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
-    await tester.tap(find.byTooltip('Remove photo'));
+    expect(find.text('Change avatar'), findsOneWidget);
+    await tester.tap(find.byTooltip('Remove avatar'));
     await tester.pump();
 
     expect(find.byType(Image), findsNothing);
@@ -252,7 +259,7 @@ void main() {
     await tester.pumpWidget(_profileEditorHost((_) {}));
     await tester.tap(find.text('Open editor'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Choose photo'));
+    await tester.tap(find.text('Choose avatar'));
     await tester.pumpAndSettle();
     expect(find.text('Animated GIF file'), findsOneWidget);
     await tester.tap(find.text('Photo from gallery'));
@@ -262,6 +269,57 @@ void main() {
     expect(pickedCall?.arguments['maxWidth'], 768.0);
     expect(pickedCall?.arguments['maxHeight'], 768.0);
     expect(pickedCall?.arguments['imageQuality'], 100);
+  });
+
+  testWidgets('photo picker offers GIF search', (tester) async {
+    await tester.pumpWidget(_profileEditorHost((_) {}));
+    await tester.tap(find.text('Open editor'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Choose avatar'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Search GIFs'), findsOneWidget);
+    expect(
+      tester.widget<BottomSheet>(find.byType(BottomSheet)).backgroundColor,
+      AppColors.surface,
+    );
+  });
+
+  testWidgets('choosing a searched GIF saves its durable media URL', (
+    tester,
+  ) async {
+    final gifService = _FakeKlipyGifService();
+    ProfileEditorResult? result;
+    await tester.pumpWidget(
+      _profileEditorHost(
+        (value) => result = value,
+        klipyGifService: gifService,
+      ),
+    );
+    await tester.tap(find.text('Open editor'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Choose avatar'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Search GIFs'));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const ValueKey('profile-gif-search')),
+      'zoro',
+    );
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Powered by KLIPY'), findsOneWidget);
+    expect(gifService.searches, ['zoro']);
+    await tester.tap(
+      find.byKey(const ValueKey('profile-gif-option-zoro-wave')),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Save'));
+    await tester.pumpAndSettle();
+
+    expect(result?.photoUrl, 'https://static.klipy.com/zoro-avatar.gif');
+    expect(gifService.registeredQuery, 'zoro');
   });
 
   testWidgets('cover picker requests a bounded wide source', (tester) async {
@@ -505,4 +563,36 @@ class _RecordingProfileStore extends ViewerProfileStore {
     clearedCoverUrl = clearCoverUrl;
     return synced;
   }
+}
+
+class _FakeKlipyGifService extends KlipyGifService {
+  _FakeKlipyGifService() : super(Dio(), apiKey: 'test-key');
+
+  static const gif = KlipyGif(
+    slug: 'zoro-wave',
+    title: 'Zoro Wave',
+    thumbnailUrl: 'https://static.klipy.com/zoro-small.gif',
+    avatarUrl: 'https://static.klipy.com/zoro-avatar.gif',
+  );
+
+  final searches = <String>[];
+  String? registeredQuery;
+
+  @override
+  Future<List<KlipyGif>> search(
+    String query, {
+    CancelToken? cancelToken,
+  }) async {
+    searches.add(query);
+    return [gif];
+  }
+
+  @override
+  Future<void> registerSelection(KlipyGif gif, String query) async {
+    registeredQuery = query;
+  }
+
+  @override
+  Future<String?> avatarUrlForSlug(String slug) async =>
+      slug == gif.slug ? gif.avatarUrl : null;
 }

@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import 'package:image/image.dart' as img;
 
 import '../app_config.dart';
+import 'profile_avatar_reference.dart';
 
 /// Uploads a profile photo through the intake Worker (`cloudflare/log-intake/`,
 /// `POST /v1/avatar-slot`), which stores the bytes in R2 and returns the
@@ -15,6 +16,7 @@ class ProfileAvatarUploader {
   ProfileAvatarUploader(this._dio);
 
   static const int maxAvatarBytes = 512 * 1024;
+  static const int maxGifAvatarBytes = 1024 * 1024;
   static const int maxAvatarDimension = 768;
   static const int maxGifDimension = 512;
   static const int maxGifFrames = 60;
@@ -27,7 +29,7 @@ class ProfileAvatarUploader {
   final Dio _dio;
 
   static bool isAllowedGif(Uint8List bytes) {
-    if (bytes.isEmpty || bytes.lengthInBytes > maxAvatarBytes) return false;
+    if (bytes.isEmpty || bytes.lengthInBytes > maxGifAvatarBytes) return false;
     return _inspectGif(
           bytes,
           maxDimension: maxGifDimension,
@@ -77,6 +79,7 @@ class ProfileAvatarUploader {
   }
 
   Future<bool> delete({required String url, required String token}) async {
+    if (isKlipyAvatarReference(url) || isKlipyAvatarMediaUrl(url)) return true;
     try {
       await _dio.delete<void>(
         '$kLogIntakeUrl/v1/avatar-slot',
@@ -246,13 +249,13 @@ _AvatarUpload? _prepareGifAvatar(Uint8List bytes) {
   );
   if (sourceInfo == null) return null;
 
-  if (bytes.lengthInBytes <= ProfileAvatarUploader.maxAvatarBytes &&
+  if (bytes.lengthInBytes <= ProfileAvatarUploader.maxGifAvatarBytes &&
       sourceInfo.width <= ProfileAvatarUploader.maxGifDimension &&
       sourceInfo.height <= ProfileAvatarUploader.maxGifDimension &&
       sourceInfo.numFrames <= ProfileAvatarUploader.maxGifFrames) {
     final looping = _ensureGifLoops(bytes);
     if (looping != null &&
-        looping.lengthInBytes <= ProfileAvatarUploader.maxAvatarBytes) {
+        looping.lengthInBytes <= ProfileAvatarUploader.maxGifAvatarBytes) {
       return (bytes: looping, contentType: 'image/gif');
     }
   }
@@ -292,7 +295,7 @@ _AvatarUpload? _prepareGifAvatar(Uint8List bytes) {
     }
     final compressed = encoder.finish();
     if (compressed != null &&
-        compressed.lengthInBytes <= ProfileAvatarUploader.maxAvatarBytes &&
+        compressed.lengthInBytes <= ProfileAvatarUploader.maxGifAvatarBytes &&
         ProfileAvatarUploader.isAllowedGif(compressed)) {
       return (bytes: compressed, contentType: 'image/gif');
     }
@@ -302,7 +305,7 @@ _AvatarUpload? _prepareGifAvatar(Uint8List bytes) {
       final estimate =
           targetSide *
           math.sqrt(
-            ProfileAvatarUploader.maxAvatarBytes / compressed.lengthInBytes,
+            ProfileAvatarUploader.maxGifAvatarBytes / compressed.lengthInBytes,
           ) *
           0.85;
       targetSide = estimate.floor().clamp(64, targetSide - 1);
@@ -500,7 +503,7 @@ Uint8List? _ensureGifLoops(Uint8List bytes) {
 
   if (offset >= bytes.length || bytes[offset] != 0x2c) return null;
   if (bytes.length + _infiniteGifLoopExtension.length >
-      ProfileAvatarUploader.maxAvatarBytes) {
+      ProfileAvatarUploader.maxGifAvatarBytes) {
     return null;
   }
   final looping = Uint8List(bytes.length + _infiniteGifLoopExtension.length);

@@ -92,6 +92,23 @@ void main() {
     expect(img.decodeGif(adapter.uploadedBytes)!.numFrames, 2);
   });
 
+  test('preserves a valid GIF between 512 KiB and 1 MiB', () async {
+    final adapter = _RecordingAdapter();
+    final dio = Dio()..httpClientAdapter = adapter;
+    final gif = _gifWithCommentPayload(600 * 1024);
+    expect(gif.length, greaterThan(512 * 1024));
+    expect(gif.length, lessThanOrEqualTo(1024 * 1024));
+    expect(ProfileAvatarUploader.isAllowedGif(gif), isTrue);
+
+    final result = await ProfileAvatarUploader(
+      dio,
+    ).upload(bytes: gif, token: 'token');
+
+    expect(result, 'https://cdn.example/avatar.gif');
+    expect(adapter.contentLength, gif.length);
+    expect(adapter.uploadedBytes, gif);
+  });
+
   test('forces finite GIFs to loop forever without losing frames', () async {
     final adapter = _RecordingAdapter();
     final dio = Dio()..httpClientAdapter = adapter;
@@ -229,7 +246,7 @@ void main() {
     expect(ProfileAvatarUploader.isAllowedGif(adapter.uploadedBytes), isTrue);
     expect(
       adapter.contentLength,
-      lessThanOrEqualTo(ProfileAvatarUploader.maxAvatarBytes),
+      lessThanOrEqualTo(ProfileAvatarUploader.maxGifAvatarBytes),
     );
     final uploaded = img.decodeGif(adapter.uploadedBytes)!;
     expect(uploaded.width, lessThanOrEqualTo(512));
@@ -325,6 +342,30 @@ void main() {
     expect(adapter.data, {'url': 'https://cdn.example/avatars/user/photo.jpg'});
     expect(adapter.authorization, 'Bearer token');
   });
+
+  test('does not send KLIPY avatar references to R2 deletion', () async {
+    final adapter = _RecordingAdapter();
+    final dio = Dio()..httpClientAdapter = adapter;
+
+    final deleted = await ProfileAvatarUploader(
+      dio,
+    ).delete(url: 'klipy:one-piece-zoro', token: 'token');
+
+    expect(deleted, isTrue);
+    expect(adapter.requests, 0);
+  });
+
+  test('does not send KLIPY media URLs to R2 deletion', () async {
+    final adapter = _RecordingAdapter();
+    final dio = Dio()..httpClientAdapter = adapter;
+
+    final deleted = await ProfileAvatarUploader(
+      dio,
+    ).delete(url: 'https://static.klipy.com/zoro-wave.gif', token: 'token');
+
+    expect(deleted, isTrue);
+    expect(adapter.requests, 0);
+  });
 }
 
 Uint8List _animatedGif({int repeat = 0}) {
@@ -334,6 +375,25 @@ Uint8List _animatedGif({int repeat = 0}) {
     encoder.addFrame(frame, duration: 10);
   }
   return encoder.finish()!;
+}
+
+Uint8List _gifWithCommentPayload(int payloadSize) {
+  final gif = _animatedGif();
+  final comment = <int>[0x21, 0xfe];
+  var remaining = payloadSize;
+  while (remaining > 0) {
+    final length = min(255, remaining);
+    comment
+      ..add(length)
+      ..addAll(List<int>.filled(length, 0));
+    remaining -= length;
+  }
+  comment.add(0);
+  return Uint8List.fromList([
+    ...gif.sublist(0, gif.length - 1),
+    ...comment,
+    0x3b,
+  ]);
 }
 
 Uint8List _largeAnimatedGif() {

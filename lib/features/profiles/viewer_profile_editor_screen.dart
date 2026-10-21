@@ -9,6 +9,7 @@ import 'package:image_picker/image_picker.dart';
 
 import '../../core/di/injector.dart';
 import '../../core/profiles/profile_avatar_uploader.dart';
+import '../../core/profiles/klipy_gif_service.dart';
 import '../../core/profiles/viewer_profile.dart';
 import '../../core/profiles/viewer_profile_avatar.dart';
 import '../../core/supabase/supabase_service.dart';
@@ -16,6 +17,7 @@ import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_text.dart';
 import '../../core/ui/settings_widgets.dart';
 import '../auth/auth_cubit.dart';
+import 'klipy_gif_picker.dart';
 
 Future<void> openViewerProfileEditor(
   BuildContext context,
@@ -28,6 +30,7 @@ Future<void> openViewerProfileEditor(
       builder: (_) => ViewerProfileEditorScreen(
         profile: profile,
         initialAvatar: initialAvatar,
+        klipyGifService: KlipyGifService.shared,
       ),
     ),
   );
@@ -159,15 +162,19 @@ class ProfileEditorResult {
   final String? coverUrl;
 }
 
+enum _PhotoSource { gallery, fileGif, klipy }
+
 class ViewerProfileEditorScreen extends StatefulWidget {
   const ViewerProfileEditorScreen({
     super.key,
     this.profile,
     this.initialAvatar = 0,
+    this.klipyGifService,
   });
 
   final ViewerProfile? profile;
   final int initialAvatar;
+  final KlipyGifService? klipyGifService;
 
   @override
   State<ViewerProfileEditorScreen> createState() =>
@@ -214,31 +221,82 @@ class _ViewerProfileEditorScreenState extends State<ViewerProfileEditorScreen> {
   }
 
   Future<void> _pickPhoto() async {
-    final pickGif = await showModalBottomSheet<bool>(
+    final source = await showModalBottomSheet<_PhotoSource>(
       context: context,
+      isScrollControlled: true,
       showDragHandle: true,
-      builder: (context) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ListTile(
-              leading: const Icon(Icons.photo_outlined),
-              title: const Text('Photo from gallery'),
-              onTap: () => Navigator.of(context).pop(false),
-            ),
-            ListTile(
-              leading: const Icon(Icons.movie_filter_outlined),
-              title: const Text('Animated GIF file'),
-              onTap: () => Navigator.of(context).pop(true),
-            ),
-            const SizedBox(height: 8),
-          ],
+      backgroundColor: AppColors.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+      ),
+      clipBehavior: Clip.antiAlias,
+      builder: (sheetContext) => SafeArea(
+        top: false,
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(4, 0, 4, 14),
+                child: Text('Choose avatar', style: AppText.title),
+              ),
+              ListTile(
+                tileColor: AppColors.surface2,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(18),
+                ),
+                leading: Icon(Icons.photo_outlined, color: AppColors.accent),
+                title: const Text('Photo from gallery'),
+                subtitle: const Text('Choose an image on this device'),
+                onTap: () =>
+                    Navigator.of(sheetContext).pop(_PhotoSource.gallery),
+              ),
+              const SizedBox(height: 8),
+              ListTile(
+                tileColor: AppColors.surface2,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(18),
+                ),
+                leading: Icon(
+                  Icons.movie_filter_outlined,
+                  color: AppColors.accent,
+                ),
+                title: const Text('Animated GIF file'),
+                subtitle: const Text('Choose a GIF on this device'),
+                onTap: () =>
+                    Navigator.of(sheetContext).pop(_PhotoSource.fileGif),
+              ),
+              const SizedBox(height: 8),
+              ListTile(
+                tileColor: AppColors.surface2,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(18),
+                ),
+                leading: Icon(Icons.search_rounded, color: AppColors.accent),
+                title: const Text('Search GIFs'),
+                subtitle: const Text('Find an animated avatar online'),
+                onTap: () => Navigator.of(sheetContext).pop(_PhotoSource.klipy),
+              ),
+            ],
+          ),
         ),
       ),
     );
-    if (pickGif == null || !mounted) return;
-    if (pickGif) {
+    if (source == null || !mounted) return;
+    if (source == _PhotoSource.fileGif) {
       await _pickGif();
+      return;
+    }
+    if (source == _PhotoSource.klipy) {
+      final service = widget.klipyGifService ?? KlipyGifService.shared;
+      final gif = await showProfileKlipyGifPicker(context, service);
+      if (gif == null || !mounted) return;
+      setState(() {
+        _photoUrl = gif.avatarUrl;
+        _photoError = null;
+      });
       return;
     }
     await _pickStillPhoto();
@@ -481,6 +539,7 @@ class _ViewerProfileEditorScreenState extends State<ViewerProfileEditorScreen> {
                               photoUrl: _photoUrl,
                               iconSize: 36,
                               photoDiameter: 70,
+                              klipyGifService: widget.klipyGifService,
                             ),
                           ),
                         ),
@@ -490,7 +549,7 @@ class _ViewerProfileEditorScreenState extends State<ViewerProfileEditorScreen> {
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Text(
-                                'Profile photo',
+                                'Profile avatar',
                                 style: AppText.caption.copyWith(
                                   color: AppColors.textSecondary,
                                 ),
@@ -529,13 +588,13 @@ class _ViewerProfileEditorScreenState extends State<ViewerProfileEditorScreen> {
                                       _uploading
                                           ? 'Uploading…'
                                           : _photoUrl == null
-                                          ? 'Choose photo'
-                                          : 'Change photo',
+                                          ? 'Choose avatar'
+                                          : 'Change avatar',
                                     ),
                                   ),
                                   if (_photoUrl != null)
                                     IconButton.filledTonal(
-                                      tooltip: 'Remove photo',
+                                      tooltip: 'Remove avatar',
                                       onPressed: _uploading
                                           ? null
                                           : () => setState(

@@ -27,14 +27,14 @@ const MAX_BYTES = 1_000_000;
 /** Bumped by hand when the Worker changes, so `/health` can prove which code
  *  is actually serving. Cloudflare takes a while to roll a new version out and
  *  there is otherwise no way to tell from outside. */
-const BUILD = 'ctx-5';
+const BUILD = 'ctx-6';
 
 /** Supabase JWKS endpoint (ES256, P-256). Cached in a module global;
  *  refetched only when the token's `kid` misses the cache. */
 const JWKS_URL =
   'https://eogwzrlfoercfwcfwlmv.supabase.co/auth/v1/.well-known/jwks.json';
 const JWT_ISSUER = `${new URL(JWKS_URL).origin}/auth/v1`;
-const AVATAR_MAX_BYTES = 512 * 1024;
+const AVATAR_MAX_BYTES = 1024 * 1024;
 const AVATAR_GIF_MAX_DIMENSION = 512;
 const AVATAR_GIF_MAX_FRAMES = 60;
 let CACHED_JWKS = null;

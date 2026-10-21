@@ -58,3 +58,10 @@ const String kTmdbApiKey = String.fromEnvironment(
   'TMDB_API_KEY',
   defaultValue: '',
 );
+
+/// Public KLIPY API key used by profile GIF search. Supply with
+/// `--dart-define=KLIPY_API_KEY=...`; the picker explains when it is unset.
+const String kKlipyApiKey = String.fromEnvironment(
+  'KLIPY_API_KEY',
+  defaultValue: '',
+);

@@ -6,7 +6,7 @@ const jwksUrl =
   'https://eogwzrlfoercfwcfwlmv.supabase.co/auth/v1/.well-known/jwks.json';
 const issuer = 'https://eogwzrlfoercfwcfwlmv.supabase.co/auth/v1';
 const userId = '12000000-0000-4000-8000-000000000001';
-const maxBytes = 512 * 1024;
+const maxBytes = 1024 * 1024;
 const encoder = new TextEncoder();
 const originalFetch = globalThis.fetch;
 const keys = await crypto.subtle.generateKey(
@@ -207,7 +207,7 @@ test('rejects unsigned deletion and URL lookalikes', async () => {
   assert.deepEqual(env.deletes, []);
 });
 
-test('accepts a photo exactly at the 512 KiB limit', async () => {
+test('accepts a photo exactly at the 1 MiB limit', async () => {
   const env = environment();
   const response = await worker.fetch(
     requestFor(await token(), jpegBytes(maxBytes)),
@@ -216,6 +216,17 @@ test('accepts a photo exactly at the 512 KiB limit', async () => {
 
   assert.equal(response.status, 200);
   assert.equal(env.writes[0][1].byteLength, maxBytes);
+});
+
+test('rejects an avatar one byte over the 1 MiB limit', async () => {
+  const env = environment();
+  const response = await worker.fetch(
+    requestFor(await token(), jpegBytes(maxBytes + 1)),
+    env,
+  );
+
+  assert.equal(response.status, 413);
+  assert.equal(env.writes.length, 0);
 });
 
 for (const [type, bytes] of [
@@ -297,7 +308,7 @@ test('accepts an audience array containing authenticated', async () => {
   assert.equal(env.writes.length, 1);
 });
 
-test('rejects declared image sizes above 512 KiB before writing to R2', async () => {
+test('rejects declared image sizes above 1 MiB before writing to R2', async () => {
   const env = environment();
   const response = await worker.fetch(
     requestFor(await token(), new Uint8Array([1]), {

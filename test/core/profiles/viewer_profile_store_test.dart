@@ -546,19 +546,22 @@ void main() {
   test('photoUrl round-trips through create, update, and reload', () async {
     final created = await store.create(
       'Pic',
-      photoUrl: 'https://cdn.example/a.jpg',
+      photoUrl: 'https://static.klipy.com/zoro-small.gif',
     );
-    expect(created?.photoUrl, 'https://cdn.example/a.jpg');
-    await store.update(created!.id, photoUrl: 'https://cdn.example/b.jpg');
+    expect(created?.photoUrl, 'https://static.klipy.com/zoro-small.gif');
+    await store.update(
+      created!.id,
+      photoUrl: 'https://static.klipy.com/zoro-avatar.gif',
+    );
     expect(
       store.profiles.firstWhere((p) => p.id == created.id).photoUrl,
-      'https://cdn.example/b.jpg',
+      'https://static.klipy.com/zoro-avatar.gif',
     );
     final again = ViewerProfileStore();
     await again.loadForUser(displayName: 'Account');
     expect(
       again.profiles.firstWhere((p) => p.id == created.id).photoUrl,
-      'https://cdn.example/b.jpg',
+      'https://static.klipy.com/zoro-avatar.gif',
     );
   });
 
