@@ -53,6 +53,7 @@ import '../detail/detail_screen.dart';
 import '../player/tv_playback_launch.dart';
 import '../search/browse_sources_screen.dart';
 import '../sources/providers_hub_screen.dart';
+import '../sources/source_picker_row_actions.dart';
 import 'home_screen.dart' show HomeLoadedEmptyView;
 import 'see_all_screen.dart';
 import 'cubit/home_cubit.dart';
@@ -86,6 +87,7 @@ class _HomeScreenTvState extends State<HomeScreenTv> {
   bool _sourceCatalogueSelected = false;
   String? _sourceCatalogueSourceId;
   List<HomeSection> _sourceCatalogueSections = const [];
+  final _sourceCatalogueController = SourceCatalogueHomeController();
 
   /// Stable identities so Anime ↔ Movie/TV swaps reuse the already-built
   /// 10-foot trees (hero + rails) instead of reconstructing them.
@@ -264,6 +266,16 @@ class _HomeScreenTvState extends State<HomeScreenTv> {
                       SourceSwitcher(
                         currentId: sourceId,
                         onChanged: _selectHomeCatalogueSource,
+                        trailingBuilder: (id) => SourcePickerRowActions(
+                          sourceId: id,
+                          onCloudflareSolved: (solvedId) async {
+                            if (!mounted ||
+                                solvedId != _sourceCatalogueSourceId) {
+                              return;
+                            }
+                            await _sourceCatalogueController.refresh();
+                          },
+                        ),
                       ),
                     ],
                   ),
@@ -931,6 +943,7 @@ class _HomeScreenTvState extends State<HomeScreenTv> {
     final heroItems = _sourceCatalogueHeroItems.take(6).toList();
     Widget sourceCatalogueContent(ContentMode contentMode) =>
         SourceCatalogueHomeContent(
+          controller: _sourceCatalogueController,
           initialSourceId: _sourceCatalogueSourceId,
           mode: contentMode,
           onSourceSelected: (sourceId) {

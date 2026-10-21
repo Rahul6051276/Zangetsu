@@ -66,6 +66,13 @@ void main() {
     expect(ZModePrefs.enabled, isFalse);
     await pumpSlot(tester);
     expect(find.byType(SourceSwitcher), findsOneWidget);
+    expect(
+      tester
+          .widget<SourceSwitcher>(find.byType(SourceSwitcher))
+          .trailingBuilder,
+      isNotNull,
+      reason: 'Home source rows should expose their per-source actions',
+    );
   });
 
   testWidgets('Z Mode on: the source switcher is hidden', (tester) async {

@@ -515,6 +515,7 @@ class SourceSwitcher extends StatelessWidget {
     required this.currentId,
     required this.onChanged,
     this.onInstallSources,
+    this.trailingBuilder,
   });
 
   final String currentId;
@@ -526,6 +527,9 @@ class SourceSwitcher extends StatelessWidget {
   /// anime-mode behavior, and a safe no-op for any caller that hasn't wired
   /// this up).
   final VoidCallback? onInstallSources;
+
+  /// Optional per-source actions (for example, Cloudflare solve or settings).
+  final Widget? Function(String id)? trailingBuilder;
 
   /// Installed + enabled providers bucketed by category (shared helper).
   SourceBuckets _buckets() => categorizedSources();
@@ -640,7 +644,7 @@ class SourceSwitcher extends StatelessWidget {
     final isTv = sl.isRegistered<AppMode>() && sl<AppMode>().isTv;
     if (isTv) {
       return TvFocusable(
-        onTap: () => showPicker(context),
+        onTap: () => showPicker(context, trailingBuilder: trailingBuilder),
         // Picker autofocuses a source row; KeyDown open + KeyUp would
         // activate that row and close the sheet immediately.
         waitForKeyUp: true,
@@ -651,7 +655,10 @@ class SourceSwitcher extends StatelessWidget {
         child: ExcludeSemantics(child: chip),
       );
     }
-    return GestureDetector(onTap: () => showPicker(context), child: chip);
+    return GestureDetector(
+      onTap: () => showPicker(context, trailingBuilder: trailingBuilder),
+      child: chip,
+    );
   }
 
   /// Opens the shared source picker (tabbed anime/movies list with CS·/Ani·
@@ -707,7 +714,7 @@ class SourceSwitcher extends StatelessWidget {
       builder: (ctx) => _SourcePickerSheet(
         buckets: b,
         currentId: currentId,
-        trailingBuilder: trailingBuilder,
+        trailingBuilder: trailingBuilder ?? this.trailingBuilder,
         height: sheetH.toDouble(),
         showSearch: showSearch,
         mode: mode,
