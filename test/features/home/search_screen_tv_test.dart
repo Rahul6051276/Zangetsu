@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -16,8 +17,11 @@ import 'package:watch_app/core/tv/tv_focusable.dart';
 import 'package:watch_app/core/tv/tv_list_focusable.dart';
 import 'package:watch_app/core/tv/tv_text_field.dart';
 import 'package:watch_app/core/zmode/metadata_repository.dart';
+import 'package:watch_app/core/zmode/metadata_filters.dart';
+import 'package:watch_app/core/ui/dock_visibility.dart';
 import 'package:watch_app/features/home/search_screen_tv.dart';
 import 'package:watch_app/features/search/bloc/search_bloc.dart';
+import 'package:watch_app/features/search/bloc/search_event.dart';
 import 'package:watch_app/features/search/bloc/search_state.dart';
 
 // ── Minimal stubs ─────────────────────────────────────────────────────────────
@@ -74,6 +78,16 @@ class _StubSearchPrefs extends SearchPrefs {
 }
 
 /// [TitleSuggestionService] stub: never makes network calls.
+class _NewSearchPrefs extends _StubSearchPrefs {
+  String style = 'new';
+  @override
+  String get tvSearchStyle => style;
+  void choose(String value) {
+    style = value;
+    notifyListeners();
+  }
+}
+
 class _StubSuggestions extends TitleSuggestionService {
   _StubSuggestions() : super(Dio());
 
@@ -121,6 +135,17 @@ class _StubSourceRepository implements SourceRepository {
 /// invoked in tests — no events are dispatched — so no real repo/history calls
 /// are made.
 class _FakeSearchBloc extends SearchBloc {
+  final submittedQueries = <String?>[];
+
+  @override
+  void add(SearchEvent event) {
+    if (event is SearchRunRequested) {
+      submittedQueries.add(event.query);
+      return;
+    }
+    super.add(event);
+  }
+
   _FakeSearchBloc(SearchState targetState)
     : super(
         repo: _StubSourceRepository(),
@@ -162,6 +187,17 @@ class _FiltersRepo implements MetadataRepository {
   final bool supports;
   @override
   bool get supportsFilters => supports;
+  final requests = <({String query, MetaFilters? filters})>[];
+  @override
+  Future<List<MediaItem>> searchFiltered(
+    String query, {
+    MetaFilters? filters,
+    int page = 1,
+  }) async {
+    requests.add((query: query, filters: filters));
+    return const [];
+  }
+
   @override
   noSuchMethod(Invocation i) => super.noSuchMethod(i);
 }
@@ -248,32 +284,220 @@ void main() {
     expect(field.focusNode!.hasFocus, isFalse);
   });
 
+  testWidgets('Classic OK opens the original system keyboard in place', (
+    tester,
+  ) async {
+    final bloc = _FakeSearchBloc(SearchState());
+    addTearDown(bloc.close);
+    await tester.pumpWidget(_buildUnderTest(bloc));
+    await tester.pumpAndSettle();
+    expect(tester.testTextInput.isVisible, isFalse);
+    await tester.sendKeyEvent(LogicalKeyboardKey.select);
+    await tester.pumpAndSettle();
+    expect(tester.testTextInput.isVisible, isTrue);
+    expect(tester.widget<TextField>(find.byType(TextField)).readOnly, isFalse);
+    expect(find.byKey(const ValueKey('tv-search-input-screen')), findsNothing);
+    expect(
+      find.byKey(const ValueKey('tv-search-scope-current')),
+      findsOneWidget,
+    );
+    await tester.enterText(find.byType(TextField), 'tanya');
+    await tester.testTextInput.receiveAction(TextInputAction.search);
+    await tester.pumpAndSettle();
+    expect(bloc.submittedQueries, ['tanya']);
+    expect(find.byType(TextField), findsOneWidget);
+    expect(find.byKey(const ValueKey('tv-key-A')), findsNothing);
+  });
+  testWidgets('Classic tap opens the original system keyboard', (tester) async {
+    final bloc = _FakeSearchBloc(SearchState());
+    addTearDown(bloc.close);
+    await tester.pumpWidget(_buildUnderTest(bloc));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byType(TextField));
+    await tester.pumpAndSettle();
+    expect(tester.testTextInput.isVisible, isTrue);
+    expect(find.byKey(const ValueKey('tv-search-input-screen')), findsNothing);
+    expect(
+      find.byKey(const ValueKey('tv-search-scope-current')),
+      findsOneWidget,
+    );
+  });
   testWidgets(
-    'SearchScreenTv OK focuses the same query field and opens the IME '
-    '(no type-dialog popup)',
+    'New replaces Classic directly and Search keeps the keyboard visible',
     (tester) async {
+      GetIt.I.registerSingleton<SearchPrefs>(_NewSearchPrefs());
+      addTearDown(() => GetIt.I.unregister<SearchPrefs>());
       final bloc = _FakeSearchBloc(SearchState());
       addTearDown(bloc.close);
-
       await tester.pumpWidget(_buildUnderTest(bloc));
       await tester.pump();
-
-      final editNode = tester
-          .widget<TextField>(find.byType(TextField))
-          .focusNode!;
-      expect(editNode.hasFocus, isFalse);
-      expect(find.byType(AlertDialog), findsNothing);
-
+      await tester.pumpAndSettle();
+      expect(find.byType(TextField), findsNothing);
+      expect(find.byKey(const ValueKey('tv-key-A')), findsOneWidget);
+      expect(find.byKey(const ValueKey('tv-key-q')), findsNothing);
       await tester.sendKeyEvent(LogicalKeyboardKey.select);
       await tester.pump();
-      await tester.pump();
-
-      expect(find.byType(AlertDialog), findsNothing);
-      expect(editNode.hasFocus, isTrue);
-      expect(tester.testTextInput.isVisible, isTrue);
+      await tester.tap(find.byKey(const ValueKey('tv-key-done')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('tv-key-A')), findsOneWidget);
+      expect(find.byType(TextField), findsNothing);
+      expect(bloc.submittedQueries, isEmpty);
+      expect(shellBackIntercepted.value, isFalse);
     },
   );
 
+  testWidgets('one Back from New returns Home without a Classic frame', (
+    tester,
+  ) async {
+    GetIt.I.registerSingleton<SearchPrefs>(_NewSearchPrefs());
+    addTearDown(() => GetIt.I.unregister<SearchPrefs>());
+    final bloc = _FakeSearchBloc(SearchState(query: 'tanya'));
+    addTearDown(bloc.close);
+    var home = false;
+    await tester.pumpWidget(
+      BlocProvider<SearchBloc>.value(
+        value: bloc,
+        child: MaterialApp(
+          home: StatefulBuilder(
+            builder: (context, update) => PopScope(
+              canPop: false,
+              onPopInvokedWithResult: (didPop, _) {
+                if (!didPop && !shellBackIntercepted.value) {
+                  update(() => home = true);
+                }
+              },
+              child: home
+                  ? const Text('Home destination')
+                  : const SearchScreenTv(scope: SearchScope.library),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('tv-search-filters')), findsOneWidget);
+    expect(find.byKey(const ValueKey('tv-search-genres')), findsOneWidget);
+    await tester.sendKeyEvent(LogicalKeyboardKey.select);
+    await tester.pump();
+    await tester.binding.handlePopRoute();
+    await tester.pump();
+    expect(home, isTrue);
+    expect(find.byType(TextField), findsNothing);
+    expect(find.text('Home destination'), findsOneWidget);
+    await tester.pumpAndSettle();
+    expect(find.byType(TextField), findsNothing);
+  });
+
+  testWidgets('Apple TV New keyboard returns Home on remote Back', (
+    tester,
+  ) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+    try {
+      GetIt.I.registerSingleton<SearchPrefs>(_NewSearchPrefs());
+      addTearDown(() => GetIt.I.unregister<SearchPrefs>());
+      final bloc = _FakeSearchBloc(SearchState(query: 'tanya'));
+      addTearDown(bloc.close);
+      var home = false;
+      await tester.pumpWidget(
+        BlocProvider<SearchBloc>.value(
+          value: bloc,
+          child: MaterialApp(
+            home: StatefulBuilder(
+              builder: (context, update) => PopScope(
+                canPop: false,
+                onPopInvokedWithResult: (didPop, _) {
+                  if (!didPop && !shellBackIntercepted.value) {
+                    update(() => home = true);
+                  }
+                },
+                child: home
+                    ? const Text('Home destination')
+                    : const SearchScreenTv(scope: SearchScope.library),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('tv-search-filters')), findsOneWidget);
+      expect(find.byKey(const ValueKey('tv-search-genres')), findsOneWidget);
+      await tester.sendKeyEvent(LogicalKeyboardKey.select);
+      await tester.pump();
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pump();
+      expect(home, isTrue);
+      expect(find.byType(TextField), findsNothing);
+      expect(find.text('Home destination'), findsOneWidget);
+      await tester.pumpAndSettle();
+      expect(find.byType(TextField), findsNothing);
+    } finally {
+      debugDefaultTargetPlatformOverride = null;
+    }
+  });
+
+  testWidgets('changing Search style replaces the mounted search view', (
+    tester,
+  ) async {
+    final prefs = _NewSearchPrefs();
+    GetIt.I.registerSingleton<SearchPrefs>(prefs);
+    addTearDown(() => GetIt.I.unregister<SearchPrefs>());
+    final bloc = _FakeSearchBloc(SearchState());
+    addTearDown(bloc.close);
+    await tester.pumpWidget(_buildUnderTest(bloc));
+    await tester.pumpAndSettle();
+    expect(find.byType(TextField), findsNothing);
+    prefs.choose('classic');
+    await tester.pumpAndSettle();
+    expect(find.byType(TextField), findsOneWidget);
+    await tester.tap(find.byType(TextField));
+    await tester.pumpAndSettle();
+    expect(tester.testTextInput.isVisible, isTrue);
+    prefs.choose('new');
+    await tester.pumpAndSettle();
+    expect(find.byType(TextField), findsNothing);
+    expect(tester.testTextInput.isVisible, isFalse);
+    expect(find.byKey(const ValueKey('tv-key-A')), findsOneWidget);
+  });
+
+  testWidgets('New applies a genre and clears it without opening Classic', (
+    tester,
+  ) async {
+    GetIt.I.registerSingleton<SearchPrefs>(_NewSearchPrefs());
+    addTearDown(() => GetIt.I.unregister<SearchPrefs>());
+    final repo = _FiltersRepo();
+    GetIt.I.registerSingleton<MetadataRepository>(repo);
+    addTearDown(() => GetIt.I.unregister<MetadataRepository>());
+    final bloc = _FakeSearchBloc(SearchState());
+    addTearDown(bloc.close);
+    await tester.pumpWidget(_buildUnderTest(bloc, scope: SearchScope.library));
+    await tester.pumpAndSettle();
+    final space = tester.getRect(find.byKey(const ValueKey('tv-key-space')));
+    final clear = tester.getRect(find.byKey(const ValueKey('tv-key-clear')));
+    final filters = tester.getRect(
+      find.byKey(const ValueKey('tv-search-filters')),
+    );
+    final genres = tester.getRect(
+      find.byKey(const ValueKey('tv-search-genres')),
+    );
+    expect(filters.left, closeTo(space.left, 0.01));
+    expect(filters.width, closeTo(space.width, 0.01));
+    expect(filters.height, space.height);
+    expect(genres.left, closeTo(clear.left, 0.01));
+    expect(genres.width, closeTo(clear.width, 0.01));
+    expect(genres.height, clear.height);
+    await tester.tap(find.byKey(const ValueKey('tv-search-genres')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Action'));
+    await tester.pumpAndSettle();
+    expect(repo.requests.single.query, '');
+    expect(repo.requests.single.filters!.genres, ['Action']);
+    expect(find.byKey(const ValueKey('tv-key-A')), findsOneWidget);
+    expect(find.byType(TextField), findsNothing);
+    await tester.tap(find.byKey(const ValueKey('tv-search-clear-filters')));
+    await tester.pumpAndSettle();
+    expect(repo.requests.last.filters!.genres, isEmpty);
+    expect(find.byType(TextField), findsNothing);
+  });
   testWidgets('SearchScreenTv shows idle state when bloc is idle', (
     tester,
   ) async {

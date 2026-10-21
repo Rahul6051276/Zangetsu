@@ -48,6 +48,7 @@ class TvFocusable extends StatefulWidget {
     required this.onTap,
     this.onLongPress,
     this.waitForKeyUp = false,
+    this.requireKeyDown = false,
     this.autofocus = false,
     this.scale = 1.08,
     this.focusLabel,
@@ -84,6 +85,11 @@ class TvFocusable extends StatefulWidget {
   /// [onTap] pushes a screen that autofocuses another [TvFocusable] — otherwise
   /// KeyDown opens the route and KeyUp activates the new first item.
   final bool waitForKeyUp;
+
+  /// Accept a remote release only if this control received the press as well.
+  /// Use for controls that gain focus while the opening OK is still held.
+  /// Touch and accessibility clicks remain independent of remote key state.
+  final bool requireKeyDown;
 
   final bool autofocus;
   final double scale;
@@ -161,7 +167,8 @@ class _TvFocusableState extends State<TvFocusable> {
     if (!okKeys.contains(event.logicalKey)) return KeyEventResult.ignored;
 
     final longPress = widget.onLongPress;
-    final waitForUp = longPress != null || widget.waitForKeyUp;
+    final waitForUp =
+        longPress != null || widget.waitForKeyUp || widget.requireKeyDown;
 
     if (event is KeyDownEvent) {
       if (!waitForUp) {
@@ -191,8 +198,11 @@ class _TvFocusableState extends State<TvFocusable> {
     }
 
     if (event is KeyUpEvent) {
+      final receivedPress = _okHeld;
       _okHeld = false;
       _cancelLongPressTimer();
+      if (widget.requireKeyDown && !receivedPress)
+        return KeyEventResult.handled;
       if (!_longPressFired) _activate();
       return KeyEventResult.handled;
     }

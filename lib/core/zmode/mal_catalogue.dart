@@ -117,12 +117,15 @@ class MalCatalogue implements AnimeCatalogue {
 
   static (int year, String season) _currentSeason([DateTime? now]) {
     final n = now ?? DateTime.now();
-    return (n.year, switch (n.month) {
-      1 || 2 || 3 => 'winter',
-      4 || 5 || 6 => 'spring',
-      7 || 8 || 9 => 'summer',
-      _ => 'fall',
-    });
+    return (
+      n.year,
+      switch (n.month) {
+        1 || 2 || 3 => 'winter',
+        4 || 5 || 6 => 'spring',
+        7 || 8 || 9 => 'summer',
+        _ => 'fall',
+      },
+    );
   }
 
   /// First day of the season [d] falls in — the cutoff that separates a show
@@ -178,6 +181,7 @@ class MalCatalogue implements AnimeCatalogue {
   /// One request per row — MAL has no aliasing, so this is N calls where
   /// AniList makes one. They run together; a row that fails is dropped rather
   /// than failing the screen.
+  @override
   Future<List<HomeSection>> home(ZKind kind) async {
     final rows = _rows(kind);
     // Fetched once and shared by both seasonal rows rather than per row — they
@@ -189,9 +193,7 @@ class MalCatalogue implements AnimeCatalogue {
     final results = await Future.wait([
       for (final (_, rankingType) in rows)
         if (_isSeasonRow(rankingType))
-          Future.value(
-            _items({'data': _cutSeason(season, rankingType)}, kind),
-          )
+          Future.value(_items({'data': _cutSeason(season, rankingType)}, kind))
         else
           _get('/${_path(kind)}/ranking', {
                 'ranking_type': rankingType,
@@ -267,20 +269,24 @@ class MalCatalogue implements AnimeCatalogue {
   }) async {
     const limit = 20;
     if (q.trim().isEmpty) return const [];
-    try {
-      final res = await _get('/${_path(kind)}', {
-        'q': q,
-        'limit': limit,
-        'offset': (page - 1) * limit,
-        'fields': _listFields,
-        // MAL cannot filter by genre but DOES honour this one, so it is the
-        // one filter that works here.
-        'nsfw': filters?.adult ?? false,
-      });
-      return _items(res.data, kind);
-    } catch (_) {
-      return const [];
+
+    final res = await _get('/${_path(kind)}', {
+      'q': q,
+      'limit': limit,
+      'offset': (page - 1) * limit,
+      'fields': _listFields,
+      // MAL cannot filter by genre but DOES honour this one, so it is the
+      // one filter that works here.
+      'nsfw': filters?.adult ?? false,
+    });
+    if ((res.statusCode ?? 500) >= 400) {
+      throw DioException(
+        requestOptions: res.requestOptions,
+        response: res,
+        type: DioExceptionType.badResponse,
+      );
     }
+    return _items(res.data, kind);
   }
 
   @override
@@ -290,9 +296,17 @@ class MalCatalogue implements AnimeCatalogue {
       'limit': 20,
       'fields': _listFields,
     });
+    if ((res.statusCode ?? 500) >= 400) {
+      throw DioException(
+        requestOptions: res.requestOptions,
+        response: res,
+        type: DioExceptionType.badResponse,
+      );
+    }
     return _items(res.data, kind);
   }
 
+  @override
   Future<MediaDetail> detail(ZCanonical c) async {
     final id = _malIdOf(c);
     final res = await _get('/${_path(c.kind)}/$id', {'fields': _detailFields});
@@ -355,6 +369,7 @@ class MalCatalogue implements AnimeCatalogue {
     );
   }
 
+  @override
   Future<List<Episode>> episodes(ZCanonical c) async =>
       (await detail(c)).episodes;
 
