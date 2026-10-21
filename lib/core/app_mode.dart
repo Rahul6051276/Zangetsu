@@ -5,3 +5,9 @@ class AppMode {
   final bool isTv;
   const AppMode({required this.isTv});
 }
+
+bool resolveIsTvMode({
+  required bool deviceIsTv,
+  required bool forceTvPreview,
+  required bool debugBuild,
+}) => deviceIsTv || (debugBuild && forceTvPreview);

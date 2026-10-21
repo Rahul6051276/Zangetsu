@@ -144,153 +144,147 @@ class _TvHeroState extends State<_TvHero> {
         ? nativeCoverProvider(cover, item.coverHeaders)
         : null;
 
-    return SizedBox(
-      height: mq.size.height * 0.72,
-      child: Stack(
-        fit: StackFit.expand,
-        children: [
-          ColoredBox(color: AppColors.bg),
-          if (provider != null)
-            Image(
-              image: ResizeImage(provider, width: memW),
-              fit: BoxFit.cover,
-              alignment: Alignment.topCenter,
-              gaplessPlayback: true,
-            )
-          else
-            ColoredBox(color: AppColors.surface2),
-          // Left scrim for copy legibility.
-          const Positioned.fill(
-            child: IgnorePointer(
-              child: DecoratedBox(
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.centerLeft,
-                    end: Alignment.centerRight,
-                    colors: [
-                      Color(0xE60B0B0F),
-                      Color(0x4D0B0B0F),
-                      Color(0x000B0B0F),
-                    ],
-                    stops: [0.0, 0.44, 0.72],
-                  ),
-                ),
-              ),
-            ),
-          ),
-          // Bottom fade into the page so the rails below sit seamlessly.
-          Positioned.fill(
-            child: IgnorePointer(
-              child: DecoratedBox(
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.bottomCenter,
-                    end: Alignment.topCenter,
-                    colors: [AppColors.bg, const Color(0x000B0B0F)],
-                    stops: const [0.015, 0.5],
-                  ),
-                ),
-              ),
-            ),
-          ),
-          // Copy + actions, bottom-left (aligned with the row titles below).
-          Positioned(
-            left: 48,
-            right: 48,
-            bottom: 52,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                ConstrainedBox(
-                  constraints: BoxConstraints(
-                    maxWidth: mq.size.width * 0.5,
-                    maxHeight: 112,
-                  ),
-                  child: _logoUrl != null
-                      ? Align(
-                          alignment: AlignmentDirectional.centerStart,
-                          child: CachedNetworkImage(
-                            imageUrl: _logoUrl!,
-                            cacheManager: AppImageCache.manager,
-                            fit: BoxFit.contain,
-                            alignment: AlignmentDirectional.centerStart.resolve(
-                              Directionality.of(context),
-                            ),
-                            memCacheWidth: memW,
-                            fadeInDuration: Duration.zero,
-                            errorWidget: (_, _, _) => _titleText(),
-                          ),
-                        )
-                      : _titleText(),
-                ),
-                const SizedBox(height: 16),
-                _metaLine(item),
-                const SizedBox(height: 24),
-                Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    widget.wrapButton(
-                      _playBtn(),
-                      () => widget.onPlay(item),
-                      autofocus: true,
-                      semanticLabel: 'Play',
-                    ),
-                    const SizedBox(width: 14),
-                    widget.wrapButton(
-                      _glassBtn(
-                        inList ? Icons.check_rounded : Icons.add_rounded,
-                        'My List',
-                        active: inList,
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(28, 8, 28, 16),
+      child: ClipRSuperellipse(
+        key: const ValueKey('tv-home-hero-card'),
+        borderRadius: BorderRadius.circular(28),
+        child: SizedBox(
+          height: mq.size.height * 0.58,
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              ColoredBox(color: AppColors.bg),
+              if (provider != null)
+                Image(
+                  image: ResizeImage(provider, width: memW),
+                  fit: BoxFit.cover,
+                  alignment: Alignment.topCenter,
+                  gaplessPlayback: true,
+                )
+              else
+                ColoredBox(color: AppColors.surface2),
+              // Left scrim for copy legibility.
+              const Positioned.fill(
+                child: IgnorePointer(
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.centerLeft,
+                        end: Alignment.centerRight,
+                        colors: [
+                          Color(0xE60B0B0F),
+                          Color(0x4D0B0B0F),
+                          Color(0x000B0B0F),
+                        ],
+                        stops: [0.0, 0.44, 0.72],
                       ),
-                      () => widget.onToggleList(item),
-                      semanticLabel: 'My List',
                     ),
-                    const SizedBox(width: 14),
-                    widget.wrapButton(
-                      _glassBtn(Icons.info_outline_rounded, 'Info'),
-                      () => widget.onInfo(item),
-                      semanticLabel: 'Info',
-                    ),
-                    const SizedBox(width: 14),
-                    widget.wrapButton(
-                      _glassBtn(Icons.extension_outlined, context.l10n.sources),
-                      widget.onBrowseSources,
-                      semanticLabel: context.l10n.sources,
-                    ),
-                  ],
+                  ),
                 ),
-              ],
-            ),
-          ),
-          // Page dots (Apple-TV) — one per featured title, current one widened.
-          if (widget.items.length > 1)
-            Positioned(
-              left: 0,
-              right: 0,
-              bottom: 24,
-              child: Center(
-                child: Row(
+              ),
+              // Copy + actions, bottom-left (aligned with the row titles below).
+              Positioned(
+                left: 24,
+                right: 24,
+                bottom: 32,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    for (var d = 0; d < widget.items.length; d++)
-                      AnimatedContainer(
-                        duration: const Duration(milliseconds: 250),
-                        margin: const EdgeInsets.symmetric(horizontal: 3),
-                        width: d == _i ? 20 : 7,
-                        height: 7,
-                        decoration: BoxDecoration(
-                          color: d == _i
-                              ? Colors.white
-                              : Colors.white.withValues(alpha: 0.35),
-                          borderRadius: BorderRadius.circular(4),
+                    ConstrainedBox(
+                      constraints: BoxConstraints(
+                        maxWidth: mq.size.width * 0.5,
+                        maxHeight: 112,
+                      ),
+                      child: _logoUrl != null
+                          ? Align(
+                              alignment: AlignmentDirectional.centerStart,
+                              child: CachedNetworkImage(
+                                imageUrl: _logoUrl!,
+                                cacheManager: AppImageCache.manager,
+                                fit: BoxFit.contain,
+                                alignment: AlignmentDirectional.centerStart
+                                    .resolve(Directionality.of(context)),
+                                memCacheWidth: memW,
+                                fadeInDuration: Duration.zero,
+                                errorWidget: (_, _, _) => _titleText(),
+                              ),
+                            )
+                          : _titleText(),
+                    ),
+                    const SizedBox(height: 16),
+                    _metaLine(item),
+                    const SizedBox(height: 24),
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        widget.wrapButton(
+                          _playBtn(),
+                          () => widget.onPlay(item),
+                          autofocus: true,
+                          semanticLabel: 'Play',
                         ),
-                      ),
+                        const SizedBox(width: 14),
+                        widget.wrapButton(
+                          _glassBtn(
+                            inList ? Icons.check_rounded : Icons.add_rounded,
+                            'My List',
+                            active: inList,
+                          ),
+                          () => widget.onToggleList(item),
+                          semanticLabel: 'My List',
+                        ),
+                        const SizedBox(width: 14),
+                        widget.wrapButton(
+                          _glassBtn(Icons.info_outline_rounded, 'Info'),
+                          () => widget.onInfo(item),
+                          semanticLabel: 'Info',
+                        ),
+                        const SizedBox(width: 14),
+                        widget.wrapButton(
+                          _glassBtn(
+                            Icons.extension_outlined,
+                            context.l10n.sources,
+                          ),
+                          widget.onBrowseSources,
+                          semanticLabel: context.l10n.sources,
+                        ),
+                      ],
+                    ),
                   ],
                 ),
               ),
-            ),
-        ],
+              // Page dots (Apple-TV) — one per featured title, current one widened.
+              if (widget.items.length > 1)
+                Positioned(
+                  left: 0,
+                  right: 0,
+                  bottom: 14,
+                  child: Center(
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        for (var d = 0; d < widget.items.length; d++)
+                          AnimatedContainer(
+                            duration: const Duration(milliseconds: 250),
+                            margin: const EdgeInsets.symmetric(horizontal: 3),
+                            width: d == _i ? 20 : 7,
+                            height: 7,
+                            decoration: BoxDecoration(
+                              color: d == _i
+                                  ? Colors.white
+                                  : Colors.white.withValues(alpha: 0.35),
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
       ),
     );
   }

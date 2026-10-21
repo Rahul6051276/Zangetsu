@@ -12,9 +12,11 @@ import 'package:watch_app/core/models/home_section.dart';
 import 'package:watch_app/core/models/media_item.dart';
 import 'package:watch_app/core/models/provider_info.dart';
 import 'package:watch_app/core/playback/watch_history.dart';
+import 'package:watch_app/core/provider/cloudstream_provider.dart';
 import 'package:watch_app/core/repository/catalogue_repository.dart';
 import 'package:watch_app/core/repository/source_repository.dart';
 import 'package:watch_app/core/state/active_source_cubit.dart';
+import 'package:watch_app/core/theme/app_colors.dart';
 import 'package:watch_app/core/supabase/supabase_service.dart';
 import 'package:watch_app/core/tv/tv_focusable.dart';
 import 'package:watch_app/core/zmode/zmode_prefs.dart';
@@ -22,16 +24,20 @@ import 'package:watch_app/core/zmode/zmode_ids.dart';
 import 'package:watch_app/core/zmode/metadata_repository.dart';
 import 'package:watch_app/features/auth/auth_cubit.dart';
 import 'package:watch_app/features/home/cubit/home_cubit.dart';
+import 'package:watch_app/features/home/home_catalogue_prefs.dart';
 import 'package:watch_app/features/home/home_screen_tv.dart';
+import 'package:watch_app/features/home/source_catalogue_home_content.dart';
+import 'package:watch_app/core/ui/source_switcher.dart';
 
 // ── Minimal fake ──────────────────────────────────────────────────────────────
 
 /// Stub [SourceRepository] whose [home] returns the provided sections.
 /// All other methods are noSuchMethod-guarded — they throw if called.
 class _StubSourceRepository implements SourceRepository {
-  const _StubSourceRepository(this._sections);
+  const _StubSourceRepository(this._sections, {this.loaded = const []});
 
   final List<HomeSection> _sections;
+  final List<({String id, String name})> loaded;
 
   @override
   noSuchMethod(Invocation i) => super.noSuchMethod(i);
@@ -53,13 +59,13 @@ class _StubSourceRepository implements SourceRepository {
   String displayName(String id) => id;
 
   @override
-  String get sourceId => 'test';
+  String get sourceId => loaded.firstOrNull?.id ?? 'test';
 
   @override
-  List<({String id, String name})> get loadedSources => const [];
+  List<({String id, String name})> get loadedSources => loaded;
 
   @override
-  bool hasSource(String id) => false;
+  bool hasSource(String id) => loaded.any((source) => source.id == id);
 }
 
 class _BlockingEpisodesRepository extends _StubSourceRepository {
@@ -106,14 +112,17 @@ class _FakeAuthCubit extends Cubit<AuthState> implements AuthCubit {
   Future<bool> ensureSourceLoaded(String sourceId) async => true;
 }
 
-Widget _homeApp(HomeCubit cubit) => MultiBlocProvider(
-  providers: [
-    BlocProvider<HomeCubit>.value(value: cubit),
-    BlocProvider<AuthCubit>.value(value: _FakeAuthCubit()),
-    BlocProvider<ActiveSourceCubit>.value(value: ActiveSourceCubit()),
-  ],
-  child: const MaterialApp(home: HomeScreenTv()),
-);
+Widget _homeApp(HomeCubit cubit, {ActiveSourceCubit? activeSource}) =>
+    MultiBlocProvider(
+      providers: [
+        BlocProvider<HomeCubit>.value(value: cubit),
+        BlocProvider<AuthCubit>.value(value: _FakeAuthCubit()),
+        BlocProvider<ActiveSourceCubit>.value(
+          value: activeSource ?? ActiveSourceCubit(),
+        ),
+      ],
+      child: const MaterialApp(home: HomeScreenTv()),
+    );
 
 // ── Test ──────────────────────────────────────────────────────────────────────
 
@@ -171,8 +180,11 @@ void main() {
           .toList();
       expect(focusables, isNotEmpty);
 
-      // The very first TvFocusable (hero Play button) carries autofocus=true.
-      expect(focusables.first.autofocus, isTrue);
+      // The hero Play button keeps initial focus after the header enters the scroll.
+      expect(
+        focusables.firstWhere((f) => f.semanticLabel == 'Play').autofocus,
+        isTrue,
+      );
 
       // Poster rail cards must wire held-OK long-press (info sheet). Without
       // this, TvFocusable treats OK as an immediate tap and long-hold is dead.
@@ -180,6 +192,217 @@ void main() {
         (f) => f.semanticLabel == 'Anime Two',
       );
       expect(poster.onLongPress, isNotNull);
+    },
+  );
+
+  testWidgets('TV header scrolls with the banner and has no solid backing', (
+    tester,
+  ) async {
+    await tester.pumpWidget(_homeApp(cubit));
+    await tester.pumpAndSettle();
+
+    final header = find.byKey(const ValueKey('tv-home-header'));
+    final scroll = find.byType(CustomScrollView).first;
+    expect(
+      tester.getTopLeft(header).dy,
+      greaterThanOrEqualTo(tester.getTopLeft(scroll).dy),
+    );
+    expect(
+      find.descendant(
+        of: header,
+        matching: find.byWidgetPredicate(
+          (widget) =>
+              widget is Image &&
+              widget.image is AssetImage &&
+              (widget.image as AssetImage).assetName ==
+                  'assets/icon/logo_mark.png',
+        ),
+      ),
+      findsOneWidget,
+    );
+
+    expect(
+      find.ancestor(
+        of: header,
+        matching: find.byWidgetPredicate(
+          (widget) => widget is ColoredBox && widget.color == AppColors.bg,
+        ),
+      ),
+      findsNothing,
+    );
+    await tester.drag(scroll, const Offset(0, -80));
+    await tester.pumpAndSettle();
+    expect(header, findsNothing);
+  });
+
+  testWidgets('TV hero is a compact inset card rather than edge-to-edge', (
+    tester,
+  ) async {
+    await tester.pumpWidget(_homeApp(cubit));
+    await tester.pumpAndSettle();
+
+    final hero = find.byKey(const ValueKey('tv-home-hero-card'));
+    final scroll = find.byType(CustomScrollView).first;
+    expect(
+      tester.getTopLeft(hero).dx,
+      greaterThan(tester.getTopLeft(scroll).dx + 20),
+    );
+    expect(
+      tester.getSize(hero).width,
+      lessThan(tester.getSize(scroll).width - 40),
+    );
+    expect(
+      tester.getSize(hero).height,
+      lessThan(MediaQuery.sizeOf(tester.element(scroll)).height * 0.65),
+    );
+    expect(
+      tester.widget<ClipRSuperellipse>(hero).borderRadius,
+      BorderRadius.circular(28),
+    );
+  });
+
+  testWidgets(
+    'TV Home shows centered catalogue tabs and conditional source chip',
+    (tester) async {
+      HomeCataloguePrefs.sourceSelection.value = false;
+      final previousSourceRepository = sl.isRegistered<SourceRepository>()
+          ? sl<SourceRepository>()
+          : null;
+      final previousCloudStreamManager = sl.isRegistered<CloudStreamManager>()
+          ? sl<CloudStreamManager>()
+          : null;
+      if (previousSourceRepository != null) sl.unregister<SourceRepository>();
+      if (previousCloudStreamManager != null) {
+        sl.unregister<CloudStreamManager>();
+      }
+      const sourceSections = [
+        HomeSection(
+          title: 'Recommended',
+          items: [
+            MediaItem(
+              id: 'source-hero',
+              title: 'Source Hero Title',
+              url: '/source-hero',
+              type: ProviderType.anime,
+              sourceId: 'cs:source_one',
+            ),
+          ],
+        ),
+        HomeSection(
+          title: 'Recently Added',
+          items: [
+            MediaItem(
+              id: 'source-row',
+              title: 'Source Row Title',
+              url: '/source-row',
+              type: ProviderType.anime,
+              sourceId: 'cs:source_one',
+            ),
+          ],
+        ),
+      ];
+      sl.registerSingleton<SourceRepository>(
+        const _StubSourceRepository(
+          sourceSections,
+          loaded: [
+            (id: 'cs:source_one', name: 'Source One'),
+            (id: 'cs:source_two', name: 'Source Two'),
+          ],
+        ),
+      );
+      sl.registerSingleton<CloudStreamManager>(CloudStreamManager());
+      final previousAppMode = sl.isRegistered<AppMode>() ? sl<AppMode>() : null;
+      if (previousAppMode != null) sl.unregister<AppMode>();
+      sl.registerSingleton<AppMode>(const AppMode(isTv: true));
+      addTearDown(() {
+        if (sl.isRegistered<SourceRepository>()) {
+          sl.unregister<SourceRepository>();
+        }
+        if (previousSourceRepository != null) {
+          sl.registerSingleton<SourceRepository>(previousSourceRepository);
+        }
+        if (sl.isRegistered<CloudStreamManager>()) {
+          sl.unregister<CloudStreamManager>();
+        }
+        if (previousCloudStreamManager != null) {
+          sl.registerSingleton<CloudStreamManager>(previousCloudStreamManager);
+        }
+        if (sl.isRegistered<AppMode>()) sl.unregister<AppMode>();
+        if (previousAppMode != null) {
+          sl.registerSingleton<AppMode>(previousAppMode);
+        }
+      });
+
+      final activeSource = ActiveSourceCubit(fallback: 'cs:source_one');
+      await tester.pumpWidget(_homeApp(cubit, activeSource: activeSource));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byKey(const ValueKey('tv-home-catalogue-menu')),
+        findsNothing,
+      );
+      expect(find.byKey(const ValueKey('tv-home-tab-anime')), findsOneWidget);
+      expect(find.byKey(const ValueKey('tv-home-tab-movie')), findsOneWidget);
+      expect(find.byKey(const ValueKey('tv-home-tab-source')), findsOneWidget);
+      expect(find.byType(SourceSwitcher), findsNothing);
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey('tv-home-tab-anime')),
+          matching: find.byKey(const ValueKey('tv-home-selected-chip')),
+        ),
+        findsOneWidget,
+      );
+      final selected = tester.widget<Container>(
+        find.byKey(const ValueKey('tv-home-selected-chip')),
+      );
+      expect((selected.decoration as BoxDecoration).color, Colors.white);
+      expect(
+        (selected.decoration as BoxDecoration).borderRadius,
+        BorderRadius.circular(24),
+      );
+
+      HomeCataloguePrefs.sourceSelection.value = true;
+      await tester.pumpAndSettle();
+
+      expect(find.byType(SourceCatalogueHomeContent), findsOneWidget);
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey('tv-home-tab-source')),
+          matching: find.byKey(const ValueKey('tv-home-selected-chip')),
+        ),
+        findsOneWidget,
+      );
+      expect(find.byType(SourceSwitcher), findsOneWidget);
+      final sourceChip = tester.widget<SourceSwitcher>(
+        find.byType(SourceSwitcher),
+      );
+      expect(sourceChip.currentId, 'cs:source_one');
+      expect(
+        find.byWidgetPredicate(
+          (widget) =>
+              widget is TvFocusable && widget.semanticLabel == 'cs:source_one',
+        ),
+        findsOneWidget,
+      );
+      expect(find.text('Anime One'), findsNothing);
+      // The mobile source catalogue promotes its first section to the hero and
+      // drops that section from the rows below. TV must do the same or sources
+      // whose first section is not named Trending disappear from Home entirely.
+      expect(find.text('Source Hero Title'), findsWidgets);
+
+      // The source chip changes this Home-only preference, never the active
+      // source used for playback.
+      sourceChip.onChanged('cs:source_two');
+      await tester.pumpAndSettle();
+      expect(
+        tester.widget<SourceSwitcher>(find.byType(SourceSwitcher)).currentId,
+        'cs:source_two',
+      );
+      expect(activeSource.state, 'cs:source_one');
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      HomeCataloguePrefs.sourceSelection.value = false;
+      await activeSource.close();
     },
   );
 

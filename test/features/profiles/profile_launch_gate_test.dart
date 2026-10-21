@@ -572,7 +572,7 @@ void main() {
     expect(find.text('Save'), findsOneWidget);
   });
 
-  testWidgets('TV picker exposes profile actions to D-pad focus', (
+  testWidgets('TV picker uses full-bleed art behind a focused profile list', (
     tester,
   ) async {
     GetIt.instance.registerSingleton<AppMode>(const AppMode(isTv: true));
@@ -583,15 +583,15 @@ void main() {
 
     expect(find.byType(TvListFocusable), findsNWidgets(3));
     expect(
-      (tester
-                  .widget<GridView>(
-                    find.byKey(const ValueKey('profile-picker-grid')),
-                  )
-                  .gridDelegate
-              as SliverGridDelegateWithFixedCrossAxisCount)
-          .crossAxisCount,
-      4,
+      find.byKey(const ValueKey('tv-profile-picker-art-panel')),
+      findsOneWidget,
     );
+    expect(
+      find.byKey(ValueKey('tv-profile-choice-${profiles.profiles.first.id}')),
+      findsOneWidget,
+    );
+    expect(find.byIcon(Icons.manage_accounts_rounded), findsOneWidget);
+    expect(find.text('Manage profiles'), findsNothing);
     expect(
       find.byWidgetPredicate(
         (widget) =>

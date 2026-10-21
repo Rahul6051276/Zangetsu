@@ -19,6 +19,7 @@ import '../../core/theme/app_text.dart';
 import '../../core/ui/image_fade.dart';
 import '../../core/ui/native_cover_provider.dart';
 import '../../core/ui/settings_widgets.dart';
+import '../../core/tv/tv_focusable.dart';
 import '../../core/tv/tv_list_focusable.dart';
 import '../../l10n/l10n.dart';
 import '../home/cubit/home_cubit.dart';
@@ -418,6 +419,13 @@ class _ViewerProfilesScreenState extends State<ViewerProfilesScreen>
           2560,
         )
         .toInt();
+    if (isTv && screenSize.width > screenSize.height) {
+      return _buildTvProfilePicker(
+        backdropProvider: backdropProvider,
+        backdropUrl: backdropUrl,
+        backdropWidth: backdropWidth,
+      );
+    }
     return Scaffold(
       backgroundColor: AppColors.bg,
       body: Stack(
@@ -639,34 +647,336 @@ class _ViewerProfilesScreenState extends State<ViewerProfilesScreen>
     );
   }
 
+  Widget _buildTvProfilePicker({
+    required ImageProvider<Object>? backdropProvider,
+    required String? backdropUrl,
+    required int backdropWidth,
+  }) => Scaffold(
+    backgroundColor: AppColors.bg,
+    body: Stack(
+      fit: StackFit.expand,
+      children: [
+        DecoratedBox(
+          decoration: BoxDecoration(
+            gradient: RadialGradient(
+              center: const Alignment(-0.7, -0.8),
+              radius: 1.4,
+              colors: [AppColors.surface2, AppColors.bg],
+            ),
+          ),
+        ),
+        Positioned.fill(
+          key: const ValueKey('tv-profile-picker-art-panel'),
+          child: backdropProvider == null
+              ? const SizedBox.shrink()
+              : ExcludeSemantics(
+                  child: IgnorePointer(
+                    child: AnimatedSwitcher(
+                      key: const ValueKey('profile-picker-backdrop-switcher'),
+                      duration: const Duration(milliseconds: 900),
+                      reverseDuration: const Duration(milliseconds: 700),
+                      switchInCurve: Curves.easeOutCubic,
+                      switchOutCurve: Curves.easeInCubic,
+                      transitionBuilder: (child, animation) => FadeTransition(
+                        opacity: CurvedAnimation(
+                          parent: animation,
+                          curve: Curves.easeOutCubic,
+                          reverseCurve: Curves.easeInCubic,
+                        ),
+                        child: child,
+                      ),
+                      child: SizedBox.expand(
+                        key: ValueKey(backdropUrl),
+                        child: Image(
+                          key: const ValueKey('profile-picker-backdrop-image'),
+                          image: ResizeImage(
+                            backdropProvider,
+                            width: backdropWidth,
+                          ),
+                          fit: BoxFit.cover,
+                          alignment: Alignment.centerRight,
+                          frameBuilder: imageFadeIn,
+                          errorBuilder: (_, _, _) => const SizedBox.shrink(),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+        ),
+        Positioned.fill(
+          child: IgnorePointer(
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.centerLeft,
+                  end: Alignment.centerRight,
+                  stops: const [0, 0.3, 0.52, 0.76, 1],
+                  colors: [
+                    AppColors.bg.withValues(alpha: 0.98),
+                    AppColors.bg.withValues(alpha: 0.92),
+                    AppColors.bg.withValues(alpha: 0.62),
+                    AppColors.bg.withValues(alpha: 0.16),
+                    Colors.transparent,
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+        Positioned.fill(
+          child: IgnorePointer(
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  stops: const [0, 0.24, 0.72, 1],
+                  colors: [
+                    AppColors.bg.withValues(alpha: 0.12),
+                    Colors.transparent,
+                    Colors.transparent,
+                    AppColors.bg.withValues(alpha: 0.2),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+        SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(44, 28, 28, 28),
+            child: Row(
+              children: [
+                Expanded(
+                  flex: 4,
+                  child: Center(
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 560),
+                      child: ValueListenableBuilder<int>(
+                        valueListenable: _profiles.revision,
+                        builder: (context, _, _) {
+                          final lastName = _profiles.active.value?.name;
+                          final profiles = _profiles.profiles;
+                          return Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                "Who's watching?",
+                                style: AppText.title.copyWith(
+                                  fontSize: 34,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                              const SizedBox(height: 8),
+                              Text(
+                                lastName == null
+                                    ? 'Pick up where you left off.'
+                                    : 'Ready for the next watch, $lastName?',
+                                style: AppText.body.copyWith(
+                                  color: AppColors.textSecondary,
+                                  fontSize: 17,
+                                ),
+                              ),
+                              const SizedBox(height: 22),
+                              Expanded(
+                                child: SingleChildScrollView(
+                                  child: Column(
+                                    children: [
+                                      for (var i = 0; i < profiles.length; i++)
+                                        _tvProfileChoice(
+                                          profiles[i],
+                                          autofocus: i == 0,
+                                        ),
+                                      if (profiles.length <
+                                          ViewerProfileStore.maxProfiles)
+                                        _tvAddProfileChoice(),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(height: 12),
+                              Align(
+                                alignment: AlignmentDirectional.centerStart,
+                                child: _manageProfilesButton(true),
+                              ),
+                            ],
+                          );
+                        },
+                      ),
+                    ),
+                  ),
+                ),
+                const Expanded(flex: 6, child: SizedBox.expand()),
+              ],
+            ),
+          ),
+        ),
+      ],
+    ),
+  );
+
+  Widget _tvProfileChoice(ViewerProfile profile, {required bool autofocus}) {
+    final selected = _profiles.activeId == profile.id;
+    final photo = profilePhotoForFace(
+      profile: profile,
+      accountPhotoUrl: _accountPhoto(),
+    );
+    final avatarKey = GlobalKey<_ProfileAvatarTapTargetState>();
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: TvListFocusable(
+        autofocus: autofocus,
+        semanticLabel: 'Select profile ${profile.name}',
+        variant: TvFocusVariant.none,
+        onTap: () {
+          final avatar = avatarKey.currentState;
+          if (avatar == null) {
+            _switchTo(profile);
+          } else {
+            avatar.runSelection();
+          }
+        },
+        builder: (focused) => Align(
+          alignment: AlignmentDirectional.centerStart,
+          child: AnimatedContainer(
+            key: ValueKey('tv-profile-choice-${profile.id}'),
+            duration: const Duration(milliseconds: 150),
+            curve: Curves.easeOutCubic,
+            width: 360,
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            decoration: BoxDecoration(
+              color: focused
+                  ? Colors.white
+                  : selected
+                  ? AppColors.surface.withValues(alpha: 0.82)
+                  : Colors.transparent,
+              borderRadius: BorderRadius.circular(36),
+            ),
+            child: Row(
+              children: [
+                _ProfileAvatarTapTarget(
+                  key: avatarKey,
+                  profileId: profile.id,
+                  diameter: 64,
+                  fill: viewerProfileAvatarColor(profile.avatar),
+                  shape: const CircleBorder(),
+                  onTap: () => _switchTo(profile),
+                  child: ProfileAvatarFace(
+                    profile: profile,
+                    photoUrl: photo,
+                    iconSize: 28,
+                    photoDiameter: 64,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        profile.name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: AppText.headline.copyWith(
+                          color: focused
+                              ? AppColors.bg
+                              : selected
+                              ? AppColors.textPrimary
+                              : AppColors.textSecondary,
+                          fontSize: 19,
+                          fontWeight: selected
+                              ? FontWeight.w700
+                              : FontWeight.w600,
+                        ),
+                      ),
+                      if (profile.isKids)
+                        Text(
+                          'KIDS',
+                          style: AppText.overline.copyWith(
+                            color: focused ? AppColors.bg : AppColors.accent,
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+                if (selected)
+                  Icon(
+                    Icons.check_circle_rounded,
+                    color: AppColors.accent,
+                    size: 22,
+                  ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _tvAddProfileChoice() => Padding(
+    padding: const EdgeInsets.only(bottom: 8),
+    child: TvListFocusable(
+      semanticLabel: 'Add profile',
+      variant: TvFocusVariant.none,
+      onTap: () =>
+          _edit(null, defaultAvatarForNewProfile(_profiles.profiles.length)),
+      builder: (focused) => Align(
+        alignment: AlignmentDirectional.centerStart,
+        child: AnimatedContainer(
+          key: const ValueKey('tv-profile-choice-add'),
+          duration: const Duration(milliseconds: 150),
+          width: 360,
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          decoration: BoxDecoration(
+            color: focused ? Colors.white : Colors.transparent,
+            borderRadius: BorderRadius.circular(36),
+          ),
+          child: Row(
+            children: [
+              SizedBox(
+                width: 64,
+                height: 64,
+                child: Icon(
+                  Icons.add_rounded,
+                  size: 38,
+                  color: focused ? AppColors.bg : AppColors.textSecondary,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Text(
+                'Add profile',
+                style: AppText.headline.copyWith(
+                  color: focused ? AppColors.bg : AppColors.textSecondary,
+                  fontSize: 19,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    ),
+  );
+
   Widget _manageProfilesButton(bool isTv) {
     if (isTv) {
       return TvListFocusable(
         waitForKeyUp: true,
         semanticLabel: 'Manage profiles',
         onTap: _openProfileManager,
-        builder: (focused) => Container(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+        builder: (focused) => AnimatedContainer(
+          duration: const Duration(milliseconds: 150),
+          width: 64,
+          height: 64,
           decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(24),
-            border: Border.all(
-              color: focused ? AppColors.accent : AppColors.hairline,
-            ),
+            shape: BoxShape.circle,
             color: focused
-                ? AppColors.accent.withValues(alpha: 0.12)
-                : Colors.transparent,
+                ? Colors.white
+                : Colors.white.withValues(alpha: 0.12),
           ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(
-                Icons.manage_accounts_rounded,
-                size: 18,
-                color: AppColors.textSecondary,
-              ),
-              const SizedBox(width: 8),
-              Text('Manage profiles', style: AppText.button),
-            ],
+          child: Icon(
+            Icons.manage_accounts_rounded,
+            size: 24,
+            color: focused ? AppColors.bg : AppColors.textPrimary,
           ),
         ),
       );

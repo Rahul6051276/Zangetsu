@@ -5,7 +5,7 @@ import 'package:watch_app/core/hive/source_icon_store.dart';
 import 'package:watch_app/core/lnreader/novel_cloudflare.dart';
 
 import 'package:dio/dio.dart';
-import 'package:flutter/foundation.dart' show debugPrint;
+import 'package:flutter/foundation.dart' show debugPrint, kDebugMode;
 import 'package:flutter/services.dart' show MethodChannel, rootBundle;
 import 'package:get_it/get_it.dart';
 import 'package:hive_flutter/hive_flutter.dart';
@@ -224,6 +224,11 @@ Future<void> initDependencies() async {
     isTv = false;
   }
   if (!isTv && isAppleTv) isTv = true;
+  isTv = resolveIsTvMode(
+    deviceIsTv: isTv,
+    forceTvPreview: const bool.fromEnvironment('ZANGETSU_TV_PREVIEW'),
+    debugBuild: kDebugMode,
+  );
   if (isTv) tvosProvidersReady = false;
   sl.registerSingleton<AppMode>(AppMode(isTv: isTv));
 
