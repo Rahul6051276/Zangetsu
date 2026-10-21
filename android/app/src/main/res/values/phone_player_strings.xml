@@ -34,4 +34,6 @@
     <string name="phone_player_mode_fit">Fit</string>
     <string name="phone_player_mode_fill">Fill</string>
     <string name="phone_player_mode_zoom">Zoom</string>
+    <string name="phone_player_quick_quality">Quality</string>
+    <string name="phone_player_quick_speed">Speed</string>
 </resources>

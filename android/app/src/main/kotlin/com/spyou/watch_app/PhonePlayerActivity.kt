@@ -2,8 +2,10 @@ package com.spyou.watch_app
 
 import android.app.Activity
 import android.content.pm.ActivityInfo
+import android.content.res.Configuration
 import android.os.Bundle
 import android.view.View
+import android.view.ViewGroup
 import android.view.WindowManager
 import android.widget.ProgressBar
 import androidx.media3.common.C
@@ -57,6 +59,7 @@ class PhonePlayerActivity : Activity() {
     private lateinit var loading: ProgressBar
 
     private lateinit var controls: android.widget.FrameLayout
+    private lateinit var quickActions: ViewGroup
     private lateinit var btnPlay: android.widget.ImageView
     private lateinit var seek: android.widget.SeekBar
     private lateinit var positionText: android.widget.TextView
@@ -98,6 +101,7 @@ class PhonePlayerActivity : Activity() {
     private var mirrors: List<Map<String, Any?>> = emptyList()
     private var castManager: CastManager? = null
     private var castSupported = false
+    private var moreDialog: android.app.Dialog? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -116,6 +120,7 @@ class PhonePlayerActivity : Activity() {
         playerView = findViewById(R.id.player_view)
         loading = findViewById(R.id.loading)
         controls = findViewById(R.id.controls)
+        quickActions = findViewById(R.id.quick_actions)
         btnPlay = findViewById(R.id.btn_play)
         seek = findViewById(R.id.seek)
         positionText = findViewById(R.id.position)
@@ -148,6 +153,7 @@ class PhonePlayerActivity : Activity() {
             bumpControls()
             showMoreMenu()
         }
+        bindQuickActions()
         val cast = CastManager(this)
         castManager = cast
         castSupported = runCatching { cast.init() }.getOrDefault(false)
@@ -314,6 +320,49 @@ class PhonePlayerActivity : Activity() {
         next.alpha = if (hasNext) 1f else 0.4f
         prev.isFocusable = hasPrev
         next.isFocusable = hasNext
+    }
+
+    private fun bindQuickActions() {
+        quickActions.findViewById<View>(R.id.btn_rotate).setOnClickListener { toggleRotation() }
+        quickActions.findViewById<View>(R.id.quick_episodes).setOnClickListener { showEpisodeMenu() }
+        quickActions.findViewById<View>(R.id.quick_sources).setOnClickListener { showSourceMenu() }
+        quickActions.findViewById<View>(R.id.quick_tracks).setOnClickListener { showTracksMenu() }
+        quickActions.findViewById<View>(R.id.quick_quality).setOnClickListener { showQualityMenu() }
+        quickActions.findViewById<View>(R.id.quick_speed).setOnClickListener { showSpeedMenu() }
+        quickActions.findViewById<View>(R.id.quick_display).setOnClickListener { showDisplayMenu() }
+    }
+
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        moreDialog?.dismiss()
+        updateOrientationLayout()
+        val parent = quickActions.parent as ViewGroup
+        val index = parent.indexOfChild(quickActions)
+        parent.removeViewAt(index)
+        quickActions = layoutInflater.inflate(R.layout.phone_player_quick_actions, parent, false) as ViewGroup
+        parent.addView(quickActions, index)
+        bindQuickActions()
+    }
+
+    private fun updateOrientationLayout() {
+        val topScrim = controls.findViewById<View>(R.id.top_scrim)
+        topScrim.layoutParams = topScrim.layoutParams.apply {
+            height = resources.getDimensionPixelSize(R.dimen.phone_player_top_scrim_height)
+        }
+        val bottomScrim = controls.findViewById<View>(R.id.bottom_scrim)
+        bottomScrim.layoutParams = bottomScrim.layoutParams.apply {
+            height = resources.getDimensionPixelSize(R.dimen.phone_player_bottom_scrim_height)
+        }
+        val topBar = controls.findViewById<View>(R.id.top_bar)
+        val topBarParams = topBar.layoutParams as android.widget.FrameLayout.LayoutParams
+        topBarParams.marginStart = resources.getDimensionPixelSize(R.dimen.phone_player_top_bar_side_margin)
+        topBarParams.marginEnd = resources.getDimensionPixelSize(R.dimen.phone_player_top_bar_side_margin)
+        topBarParams.topMargin = resources.getDimensionPixelSize(R.dimen.phone_player_top_bar_top_margin)
+        topBar.layoutParams = topBarParams
+        val bottomBar = controls.findViewById<View>(R.id.bottom_bar)
+        val bottomBarParams = bottomBar.layoutParams as android.widget.FrameLayout.LayoutParams
+        bottomBarParams.bottomMargin = resources.getDimensionPixelSize(R.dimen.phone_player_bottom_bar_bottom_margin)
+        bottomBar.layoutParams = bottomBarParams
     }
 
     private fun loadStream(
@@ -765,14 +814,15 @@ class PhonePlayerActivity : Activity() {
 
     private fun toggleRotation() {
         requestedOrientation = if (requestedOrientation == ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE) {
-            ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+            ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
         } else {
             ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
         }
         bumpControls()
     }
 
-    private fun cycleDisplayMode() {
+    private fun showDisplayMenu() {
+        handler.removeCallbacks(hideRunnable)
         val modes = intArrayOf(
             AspectRatioFrameLayout.RESIZE_MODE_FIT,
             AspectRatioFrameLayout.RESIZE_MODE_FILL,
@@ -783,10 +833,16 @@ class PhonePlayerActivity : Activity() {
             getString(R.string.phone_player_mode_fill),
             getString(R.string.phone_player_mode_zoom)
         )
-        resizeIndex = (resizeIndex + 1) % modes.size
-        playerView.resizeMode = modes[resizeIndex]
-        toast(labels[resizeIndex])
-        bumpControls()
+        android.app.AlertDialog.Builder(this, R.style.PhonePlayerDialog)
+            .setTitle(getString(R.string.phone_player_menu_display))
+            .setSingleChoiceItems(labels, resizeIndex) { dialog, which ->
+                dialog.dismiss()
+                resizeIndex = which
+                playerView.resizeMode = modes[which]
+                bumpControls()
+            }
+            .setOnDismissListener { bumpControls() }
+            .show()
     }
 
     private fun pickCast() {
@@ -820,7 +876,7 @@ class PhonePlayerActivity : Activity() {
             { showQualityMenu() },
             { showSourceMenu() },
             { showEpisodeMenu() },
-            { cycleDisplayMode() },
+            { showDisplayMenu() },
             { toggleRotation() }
         )
         if (castSupported) {
@@ -832,57 +888,134 @@ class PhonePlayerActivity : Activity() {
         icons += R.drawable.phone_player_info
         actions += { showInfo() }
         val density = resources.displayMetrics.density
-        val rowColor = androidx.core.content.ContextCompat.getColor(
-            this,
-            R.color.phone_player_on_surface
-        )
-        val adapter = object : android.widget.BaseAdapter() {
-            override fun getCount(): Int = labels.size
-            override fun getItem(position: Int): Any = labels[position]
-            override fun getItemId(position: Int): Long = position.toLong()
-            override fun getView(position: Int, convertView: View?, parent: android.view.ViewGroup?): View {
-                val row = android.widget.LinearLayout(this@PhonePlayerActivity).apply {
-                    orientation = android.widget.LinearLayout.HORIZONTAL
-                    gravity = android.view.Gravity.CENTER_VERTICAL
-                    minimumHeight = (48 * density).toInt()
-                    setPadding(
-                        (24 * density).toInt(),
-                        (12 * density).toInt(),
-                        (24 * density).toInt(),
-                        (12 * density).toInt()
-                    )
+        fun dp(value: Int) = (value * density + 0.5f).toInt()
+        val landscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+        val surfaceColor = getColor(R.color.phone_player_surface)
+        val textColor = getColor(R.color.phone_player_on_surface)
+        val mutedColor = getColor(R.color.phone_player_on_surface_variant)
+        val dialog = android.app.Dialog(this, R.style.PhonePlayerDialog)
+        dialog.requestWindowFeature(android.view.Window.FEATURE_NO_TITLE)
+        val sheet = android.widget.LinearLayout(this).apply {
+            orientation = android.widget.LinearLayout.VERTICAL
+            setPadding(dp(18), dp(14), dp(18), dp(18))
+            background = android.graphics.drawable.GradientDrawable().apply {
+                setColor(surfaceColor)
+                val radius = dp(28).toFloat()
+                cornerRadii = if (landscape) {
+                    floatArrayOf(radius, radius, 0f, 0f, 0f, 0f, radius, radius)
+                } else {
+                    floatArrayOf(radius, radius, radius, radius, 0f, 0f, 0f, 0f)
                 }
-                val icon = android.widget.ImageView(this@PhonePlayerActivity).apply {
-                    setImageResource(icons[position])
-                    imageTintList = android.content.res.ColorStateList.valueOf(rowColor)
-                    contentDescription = null
-                    val size = (24 * density).toInt()
-                    layoutParams = android.widget.LinearLayout.LayoutParams(size, size)
-                }
-                val text = android.widget.TextView(this@PhonePlayerActivity).apply {
-                    text = labels[position]
-                    textSize = 16f
-                    setTextColor(rowColor)
-                    val params = android.widget.LinearLayout.LayoutParams(
-                        android.widget.LinearLayout.LayoutParams.WRAP_CONTENT,
-                        android.widget.LinearLayout.LayoutParams.WRAP_CONTENT
-                    )
-                    params.marginStart = (16 * density).toInt()
-                    layoutParams = params
-                }
-                row.addView(icon)
-                row.addView(text)
-                return row
             }
         }
-        android.app.AlertDialog.Builder(this, R.style.PhonePlayerDialog)
-            .setTitle(getString(R.string.phone_player_title_more))
-            .setAdapter(adapter) { dialog, which ->
-                dialog.dismiss()
-                actions[which]()
+        val header = android.widget.LinearLayout(this).apply {
+            gravity = android.view.Gravity.CENTER_VERTICAL
+            orientation = android.widget.LinearLayout.HORIZONTAL
+        }
+        header.addView(android.widget.TextView(this).apply {
+            text = getString(R.string.phone_player_title_more)
+            textSize = 22f
+            gravity = android.view.Gravity.CENTER_VERTICAL
+            setTextColor(textColor)
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+        }, android.widget.LinearLayout.LayoutParams(0, dp(52), 1f))
+        header.addView(android.widget.ImageView(this).apply {
+            setImageResource(R.drawable.phone_player_close)
+            background = getDrawable(R.drawable.phone_player_action_surface)
+            clipToOutline = true
+            foreground = getDrawable(R.drawable.phone_player_icon_ripple)
+            contentDescription = getString(android.R.string.cancel)
+            isClickable = true
+            isFocusable = true
+            setPadding(dp(11), dp(11), dp(11), dp(11))
+            setOnClickListener { dialog.dismiss() }
+        }, android.widget.LinearLayout.LayoutParams(dp(42), dp(42)))
+        sheet.addView(header)
+
+        val list = android.widget.LinearLayout(this).apply {
+            orientation = android.widget.LinearLayout.VERTICAL
+        }
+        for (index in labels.indices) {
+            val group = when (index) {
+                0 -> "PLAYBACK"
+                3 -> "WATCH NEXT"
+                5 -> "SCREEN & DEVICE"
+                else -> null
             }
-            .setOnDismissListener { bumpControls() }
-            .show()
+            if (group != null) {
+                list.addView(android.widget.TextView(this).apply {
+                    text = group
+                    textSize = 11f
+                    letterSpacing = 0.12f
+                    setTextColor(getColor(R.color.phone_player_accent))
+                    setTypeface(typeface, android.graphics.Typeface.BOLD)
+                    setPadding(dp(12), dp(14), 0, dp(5))
+                })
+            }
+            val row = android.widget.LinearLayout(this).apply {
+                gravity = android.view.Gravity.CENTER_VERTICAL
+                minimumHeight = dp(54)
+                orientation = android.widget.LinearLayout.HORIZONTAL
+                setPadding(dp(14), dp(8), dp(14), dp(8))
+                background = getDrawable(R.drawable.phone_player_action_surface)
+                clipToOutline = true
+                foreground = getDrawable(R.drawable.phone_player_icon_ripple)
+                isClickable = true
+                isFocusable = true
+                contentDescription = labels[index]
+                setOnClickListener {
+                    dialog.dismiss()
+                    actions[index]()
+                }
+            }
+            row.addView(android.widget.ImageView(this).apply {
+                setImageResource(icons[index])
+                imageTintList = android.content.res.ColorStateList.valueOf(mutedColor)
+            }, android.widget.LinearLayout.LayoutParams(dp(24), dp(24)))
+            row.addView(android.widget.TextView(this).apply {
+                text = labels[index]
+                textSize = 15f
+                setTextColor(textColor)
+                setTypeface(typeface, android.graphics.Typeface.BOLD)
+            }, android.widget.LinearLayout.LayoutParams(0, android.widget.LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
+                marginStart = dp(14)
+            })
+            row.addView(android.widget.TextView(this).apply {
+                text = "›"
+                textSize = 23f
+                setTextColor(mutedColor)
+            })
+            list.addView(row, android.widget.LinearLayout.LayoutParams(
+                android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
+                android.widget.LinearLayout.LayoutParams.WRAP_CONTENT,
+            ).apply { topMargin = dp(6) })
+        }
+        sheet.addView(android.widget.ScrollView(this).apply {
+            isFillViewport = false
+            addView(list)
+        }, android.widget.LinearLayout.LayoutParams(
+            android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
+            0,
+            1f,
+        ))
+        dialog.setContentView(sheet)
+        dialog.setOnDismissListener {
+            moreDialog = null
+            bumpControls()
+        }
+        moreDialog = dialog
+        dialog.show()
+        dialog.window?.apply {
+            setBackgroundDrawableResource(android.R.color.transparent)
+            addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
+            setDimAmount(0.56f)
+            setGravity(if (landscape) android.view.Gravity.END else android.view.Gravity.BOTTOM)
+            setLayout(
+                if (landscape) dp(370) else WindowManager.LayoutParams.MATCH_PARENT,
+                if (landscape) WindowManager.LayoutParams.MATCH_PARENT
+                else (resources.displayMetrics.heightPixels * 0.78f).toInt(),
+            )
+        }
     }
 
     private fun showInfo() {
@@ -1178,6 +1311,9 @@ class PhonePlayerActivity : Activity() {
     override fun onDestroy() {
         reportClosed()
         handler.removeCallbacksAndMessages(null)
+        moreDialog?.setOnDismissListener(null)
+        moreDialog?.dismiss()
+        moreDialog = null
         active = null
         castManager?.release()
         castManager = null
