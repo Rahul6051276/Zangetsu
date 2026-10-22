@@ -145,7 +145,7 @@ class _TvHeroState extends State<_TvHero> {
         : null;
 
     return Padding(
-      padding: const EdgeInsets.fromLTRB(28, 8, 28, 16),
+      padding: const EdgeInsets.fromLTRB(4, 8, 28, 16),
       child: ClipRSuperellipse(
         key: const ValueKey('tv-home-hero-card'),
         borderRadius: BorderRadius.circular(28),

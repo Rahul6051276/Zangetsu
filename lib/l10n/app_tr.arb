@@ -233,6 +233,8 @@
 	"installCloudStreamSources": "CloudStream kaynaklarını kur",
 	"connectionsTvSubtitle": "AniList, MyAnimeList, Simkl",
 	"profile": "Profil",
+	"changeProfile": "Profil değiştirilsin mi?",
+	"chooseWhoIsWatching": "Kimin izlediğini seçin.",
 	"home": "Ana sayfa",
 	"myList": "My List",
 	"schedule": "Yayın akışı",

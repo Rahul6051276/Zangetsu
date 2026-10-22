@@ -234,6 +234,8 @@
 	"installCloudStreamSources": "Install CloudStream sources",
 	"connectionsTvSubtitle": "AniList, MyAnimeList, Simkl",
 	"profile": "Profile",
+	"changeProfile": "Change profile?",
+	"chooseWhoIsWatching": "Choose who is watching.",
 	"home": "Home",
 	"myList": "My List",
 	"schedule": "Schedule",

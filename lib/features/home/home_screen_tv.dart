@@ -210,7 +210,7 @@ class _HomeScreenTvState extends State<HomeScreenTv> {
     return ValueListenableBuilder<int>(
       valueListenable: ZModePrefs.revision,
       builder: (context, _, _) => Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 36),
+        padding: const EdgeInsets.only(left: 12, right: 36),
         child: SizedBox(
           key: const ValueKey('tv-home-header'),
           height: 56,

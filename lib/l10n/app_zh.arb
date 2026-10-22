@@ -214,6 +214,8 @@
 	"installCloudStreamSources": "安装 CloudStream 来源",
 	"connectionsTvSubtitle": "AniList、MyAnimeList、Simkl",
 	"profile": "个人资料",
+	"changeProfile": "切换个人资料？",
+	"chooseWhoIsWatching": "选择观看者。",
 	"home": "首页",
 	"myList": "我的列表",
 	"schedule": "日程",

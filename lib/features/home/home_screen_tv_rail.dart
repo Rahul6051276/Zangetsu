@@ -40,7 +40,7 @@ class TvRail extends StatelessWidget {
         children: [
           // Section title
           Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 48),
+            padding: const EdgeInsets.only(left: 12, right: 48),
             child: Text(
               section.title,
               style: const TextStyle(
@@ -65,7 +65,7 @@ class TvRail extends StatelessWidget {
               // with the extra row headroom above, the top rail (pinned under
               // the hero) no longer crops the focused poster/title.
               clipBehavior: Clip.none,
-              padding: const EdgeInsets.symmetric(horizontal: 40),
+              padding: const EdgeInsets.only(left: 4, right: 40),
               // +1 trailing "See all" card (D-pad: navigate right past the last
               // poster to reach it). Only when a handler is supplied.
               itemCount: items.length + (onSeeAll != null ? 1 : 0),

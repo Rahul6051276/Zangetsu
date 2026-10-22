@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -26,6 +27,7 @@ import '../downloads/downloads_screen.dart';
 import '../../l10n/l10n.dart';
 import '../home/cubit/home_cubit.dart';
 import '../schedule/schedule_screen.dart';
+import '../profiles/viewer_profiles_screen.dart';
 import 'root_shell.dart';
 
 /// Width of the TV-only navigation zone while it is focused.
@@ -59,49 +61,25 @@ class RootShellTv extends StatefulWidget {
 
 /// One entry in the TV nav.
 class _RailItem {
-  const _RailItem({
-    required this.label,
-    required this.icon,
-    required this.selectedIcon,
-  });
+  const _RailItem({required this.label, required this.iconAsset});
   final String label;
-  final IconData icon;
-  final IconData selectedIcon;
+  final String iconAsset;
 }
 
-/// Nav item definitions (label + icons). Order matches [_RootShellTvState._pages].
+enum _AvatarAction { changeProfile, logOut }
+
 const int _kRailItemCount = 6;
 const int _kMyListRailItem = 2;
 
 List<_RailItem> _railItems(BuildContext context) {
   final l = context.l10n;
   return [
-    _RailItem(
-      label: l.home,
-      icon: Icons.home_outlined,
-      selectedIcon: Icons.home_filled,
-    ),
-    _RailItem(label: l.search, icon: Icons.search, selectedIcon: Icons.search),
-    _RailItem(
-      label: l.myList,
-      icon: Icons.bookmark_outline,
-      selectedIcon: Icons.bookmark,
-    ),
-    _RailItem(
-      label: l.downloads,
-      icon: Icons.download_outlined,
-      selectedIcon: Icons.download,
-    ),
-    _RailItem(
-      label: l.schedule,
-      icon: Icons.calendar_month_outlined,
-      selectedIcon: Icons.calendar_month,
-    ),
-    _RailItem(
-      label: l.settingsTitle,
-      icon: Icons.settings_outlined,
-      selectedIcon: Icons.settings,
-    ),
+    _RailItem(label: l.home, iconAsset: 'house'),
+    _RailItem(label: l.search, iconAsset: 'search'),
+    _RailItem(label: l.myList, iconAsset: 'bookmark'),
+    _RailItem(label: l.downloads, iconAsset: 'download'),
+    _RailItem(label: l.schedule, iconAsset: 'calendar-days'),
+    _RailItem(label: l.settingsTitle, iconAsset: 'settings'),
   ];
 }
 
@@ -132,6 +110,8 @@ class _RootShellTvState extends State<RootShellTv> with WidgetsBindingObserver {
   /// delay the splash overlay from clearing.
   final Set<int> _mountedPages = {0};
   bool _navOpen = false; // visible ⇔ focus is in the rail zone
+  List<Widget>? _cachedPages;
+  String? _cachedPageContext;
   DateTime? _lastBackPress;
 
   final ValueNotifier<int> _searchFocusSignal = ValueNotifier<int>(0);
@@ -494,61 +474,54 @@ class _RootShellTvState extends State<RootShellTv> with WidgetsBindingObserver {
     final selected = _index == i;
     return TvFocusable(
       focusNode: _navNodes[i],
-      variant: TvFocusVariant.pill,
+      variant: TvFocusVariant.none,
       semanticLabel: item.label,
       onTap: () => _onItemSelected(i),
-      builder: (focused) {
-        final Color fg = focused
-            ? Colors.black
-            : (selected ? AppColors.textPrimary : AppColors.textTertiary);
-        return Padding(
-          padding: const EdgeInsets.symmetric(vertical: 12),
+      builder: (focused) => AnimatedContainer(
+        duration: MediaQuery.disableAnimationsOf(context)
+            ? Duration.zero
+            : const Duration(milliseconds: 160),
+        curve: Curves.easeOutCubic,
+        height: 58,
+        decoration: BoxDecoration(
+          border: Border(
+            left: BorderSide(
+              color: focused ? Colors.white : Colors.transparent,
+              width: 3,
+            ),
+          ),
+        ),
+        child: AnimatedScale(
+          scale: focused ? 1.06 : 1,
+          alignment: Alignment.centerLeft,
+          duration: MediaQuery.disableAnimationsOf(context)
+              ? Duration.zero
+              : const Duration(milliseconds: 180),
+          curve: Curves.easeOutCubic,
           child: Row(
             children: [
-              // Quiet selected-state marker when the rail is collapsed: the
-              // focused state already paints the full white pill, so only draw
-              // this while unfocused.
-              Container(
-                width: _kIconSlot,
-                height: _kIconSlot,
-                decoration: BoxDecoration(
-                  color: (selected && !focused)
-                      ? Colors.white.withValues(alpha: 0.08)
-                      : Colors.transparent,
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Icon(
-                  selected ? item.selectedIcon : item.icon,
-                  color: focused
-                      ? Colors.black
-                      // Active tab reads from the filled glyph + bright white,
-                      // not a red tint — keeps the rail premium and calm.
-                      : (selected
-                            ? AppColors.textPrimary
-                            : AppColors.textTertiary),
-                  size: 26,
+              SizedBox(
+                width: _kNavCollapsed - 3,
+                child: Image.asset(
+                  'assets/icons/lucide/${item.iconAsset}.png',
+                  excludeFromSemantics: true,
+                  color: focused || selected ? Colors.white : Colors.white54,
+                  width: 21,
+                  height: 21,
+                  filterQuality: FilterQuality.high,
                 ),
               ),
               Expanded(
-                child: AnimatedOpacity(
-                  opacity: _navOpen ? 1 : 0,
-                  duration: const Duration(milliseconds: 180),
-                  curve: Curves.easeOut,
-                  child: Padding(
-                    padding: const EdgeInsets.only(left: 12),
-                    child: ExcludeSemantics(
-                      child: Text(
-                        item.label,
-                        maxLines: 1,
-                        softWrap: false,
-                        overflow: TextOverflow.clip,
-                        style: TextStyle(
-                          color: fg,
-                          fontSize: 18,
-                          fontWeight: selected
-                              ? FontWeight.w700
-                              : FontWeight.w500,
-                        ),
+                child: _dockLabel(
+                  ExcludeSemantics(
+                    child: Text(
+                      item.label,
+                      maxLines: 1,
+                      overflow: TextOverflow.clip,
+                      style: TextStyle(
+                        color: focused ? Colors.white : Colors.white70,
+                        fontSize: 16,
+                        fontWeight: focused ? FontWeight.w700 : FontWeight.w400,
                       ),
                     ),
                   ),
@@ -556,181 +529,177 @@ class _RootShellTvState extends State<RootShellTv> with WidgetsBindingObserver {
               ),
             ],
           ),
-        );
-      },
-    );
-  }
-
-  Future<void> _confirmLogout() async {
-    final auth = context.read<AuthCubit>();
-    await showDialog<void>(
-      context: context,
-      barrierColor: Colors.black54,
-      builder: (dialogCtx) => Align(
-        alignment: const Alignment(-0.72, -0.42), // near the profile (top-left)
-        child: TvLogoutSheet(
-          onConfirm: () async {
-            Navigator.of(dialogCtx).pop();
-            // Back the library up first (if we have a live session) so the
-            // logout-time clearLocal can't lose an un-synced library.
-            await backupLibraryIfPossible();
-            await auth.logout();
-          },
-          onCancel: () => Navigator.of(dialogCtx).pop(),
         ),
       ),
     );
   }
 
-  /// Account row pinned to the BOTTOM of the drawer (like the mockup). Always
-  /// visible: signed in → avatar + name (OK opens the log-out popup); signed
-  /// out → a placeholder + "Sign in" (OK opens the TV login screen).
-  Widget _avatarBlock() {
-    return BlocBuilder<AuthCubit, AuthState>(
-      builder: (context, auth) {
-        final loggedIn = auth.isLoggedIn;
-        final name = loggedIn ? auth.displayName : context.l10n.signIn;
-        final sub = loggedIn
-            ? context.l10n.signedIn
-            : context.l10n.syncYourListNav;
-        final avatar = auth.avatarUrl;
-        final initial = (loggedIn && name.isNotEmpty)
-            ? name[0].toUpperCase()
-            : null;
-        return TvFocusable(
-          key: const ValueKey('tv-nav-avatar'),
-          variant: TvFocusVariant.pill,
-          onTap: () {
-            if (loggedIn) {
-              _confirmLogout();
-            } else {
-              Navigator.of(context).push(
-                MaterialPageRoute<void>(builder: (_) => const LoginScreenTv()),
-              );
-            }
-          },
-          builder: (focused) => Padding(
-            padding: const EdgeInsets.symmetric(vertical: 8),
-            child: Row(
-              children: [
-                SizedBox(
-                  width: _kIconSlot,
-                  child: Center(
-                    child: CircleAvatar(
-                      radius: 19,
-                      backgroundColor: AppColors.surface2,
-                      backgroundImage: (avatar != null && avatar.isNotEmpty)
-                          ? NetworkImage(avatar)
-                          : null,
-                      child: (avatar == null || avatar.isEmpty)
-                          ? (initial != null
-                                ? Text(
-                                    initial,
-                                    style: const TextStyle(
-                                      color: Colors.white,
-                                      fontSize: 15,
-                                      fontWeight: FontWeight.w800,
-                                    ),
-                                  )
-                                : const Icon(
-                                    Icons.person_rounded,
-                                    color: AppColors.textSecondary,
-                                    size: 24,
-                                  ))
-                          : null,
-                    ),
-                  ),
-                ),
-                Expanded(
-                  child: AnimatedOpacity(
-                    opacity: _navOpen ? 1 : 0,
-                    duration: const Duration(milliseconds: 180),
-                    curve: Curves.easeOut,
-                    child: Padding(
-                      padding: const EdgeInsets.only(left: 12),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Text(
-                            name,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              color: focused
-                                  ? Colors.black
-                                  : AppColors.textPrimary,
-                              fontSize: 16,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                          Text(
-                            sub,
-                            maxLines: 1,
-                            style: TextStyle(
-                              color: focused
-                                  ? const Color(0xFF555555)
-                                  : AppColors.textTertiary,
-                              fontSize: 12,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-              ],
+  Widget _dockLabel(Widget child) => AnimatedSlide(
+    offset: _navOpen ? Offset.zero : const Offset(-0.08, 0),
+    duration: _dockDuration,
+    curve: Curves.easeOutCubic,
+    child: AnimatedOpacity(
+      opacity: _navOpen ? 1 : 0,
+      duration: _dockDuration,
+      curve: Curves.easeOutCubic,
+      child: child,
+    ),
+  );
+
+  Duration get _dockDuration => MediaQuery.disableAnimationsOf(context)
+      ? Duration.zero
+      : const Duration(milliseconds: 360);
+  Future<void> _confirmProfileSwitch() async {
+    final auth = context.read<AuthCubit>();
+    final action = await showDialog<_AvatarAction>(
+      context: context,
+      builder: (dialogContext) {
+        final l10n = dialogContext.l10n;
+        return AlertDialog(
+          title: Text(l10n.changeProfile),
+          content: Text(l10n.chooseWhoIsWatching),
+          actions: [
+            TextButton(
+              autofocus: true,
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: Text(l10n.cancel),
             ),
-          ),
+            TextButton(
+              onPressed: () =>
+                  Navigator.of(dialogContext).pop(_AvatarAction.logOut),
+              child: Text(l10n.logOut),
+            ),
+            TextButton(
+              onPressed: () =>
+                  Navigator.of(dialogContext).pop(_AvatarAction.changeProfile),
+              child: Text(l10n.change),
+            ),
+          ],
         );
       },
     );
+    if (!mounted || action == null) return;
+    if (action == _AvatarAction.logOut) {
+      // Back the library up first (if we have a live session) so the
+      // logout-time clearLocal can't lose an un-synced library.
+      await backupLibraryIfPossible();
+      await auth.logout();
+      return;
+    }
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => const ViewerProfilesScreen(selectionOnly: true),
+      ),
+    );
+    if (mounted) _openRail();
   }
 
-  /// TV navigation stays laid out while hidden so LEFT can restore focus.
-  Widget _railColumn() {
-    return SafeArea(
-      left: false,
-      right: false,
-      top: false,
-      bottom: false,
-      // Inset so pill scale (~1.04) + shadow stay inside the drawer bounds when
-      // the parent uses Clip.none (avoids cropped focus chrome).
-      child: Padding(
-        padding: const EdgeInsets.symmetric(
-          horizontal: _kRailHPad,
-          vertical: 4,
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const SizedBox(height: 12),
-            _avatarBlock(), // profile
-            const SizedBox(height: 16),
-            // Spread nav items across the remaining height (Android-TV style) so
-            // Settings stays visible at the bottom instead of clipping off.
-            Expanded(
-              child: SingleChildScrollView(
-                clipBehavior: Clip.none,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    for (var i = 0; i < _kRailItemCount; i++)
-                      _navItem(i, _railItems(context)[i]),
-                  ],
+  /// Profile shortcut at the top of the dock. Always
+  /// visible: signed in → avatar + name (OK opens the profile switch confirmation); signed
+  /// out → a placeholder + "Sign in" (OK opens the TV login screen).
+  Widget _avatarBlock() => BlocBuilder<AuthCubit, AuthState>(
+    builder: (context, auth) {
+      final profile = sl.isRegistered<ViewerProfileStore>()
+          ? sl<ViewerProfileStore>().activeProfile
+          : null;
+      final name = auth.isLoggedIn
+          ? (profile?.name ?? auth.displayName)
+          : context.l10n.signIn;
+      final avatar = profile?.photoUrl ?? auth.avatarUrl;
+      return TvFocusable(
+        key: const ValueKey('tv-nav-avatar'),
+        variant: TvFocusVariant.none,
+        semanticLabel: name,
+        onTap: () {
+          if (auth.isLoggedIn) {
+            _confirmProfileSwitch();
+          } else {
+            Navigator.of(context).push(
+              MaterialPageRoute<void>(builder: (_) => const LoginScreenTv()),
+            );
+          }
+        },
+        builder: (focused) => SizedBox(
+          height: 42,
+          child: Row(
+            children: [
+              Container(
+                width: _kIconSlot,
+                height: _kIconSlot,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                    color: focused ? Colors.white : Colors.transparent,
+                    width: 2,
+                  ),
+                ),
+                padding: const EdgeInsets.all(2),
+                child: CircleAvatar(
+                  backgroundColor: AppColors.surface2,
+                  backgroundImage: avatar?.isNotEmpty == true
+                      ? NetworkImage(avatar!)
+                      : null,
+                  child: avatar?.isNotEmpty == true
+                      ? null
+                      : const Icon(
+                          Icons.person_outline,
+                          size: 20,
+                          color: Colors.white,
+                        ),
                 ),
               ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: _dockLabel(
+                  Text(
+                    name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(color: Colors.white, fontSize: 14),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    },
+  );
+
+  /// TV navigation stays laid out while hidden so LEFT can restore focus.
+  Widget _railColumn() => SafeArea(
+    child: Center(
+      child: SingleChildScrollView(
+        child: Column(
+          key: const ValueKey('tv-nav-group'),
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: _kRailHPad),
+              child: _avatarBlock(),
             ),
-            const SizedBox(height: 6),
+            const SizedBox(height: 18),
+            for (var i = 0; i < _kRailItemCount; i++)
+              _navItem(i, _railItems(context)[i]),
           ],
         ),
       ),
-    );
-  }
-
+    ),
+  );
   @override
   Widget build(BuildContext context) {
-    final pages = _pages;
+    final profiles = sl.isRegistered<ViewerProfileStore>()
+        ? sl<ViewerProfileStore>()
+        : null;
+    final pageContext =
+        '$_index:${profiles?.activeId}:${profiles?.contextRevision.value}';
+    // Opening the dock must not rebuild every Home/Search/Settings page.
+    if (_cachedPages == null || _cachedPageContext != pageContext) {
+      _cachedPages = _pages;
+      _cachedPageContext = pageContext;
+    }
+    final pages = _cachedPages!;
     return PopScope(
       canPop: false,
       onPopInvokedWithResult: _handlePopInvoked,
@@ -752,39 +721,68 @@ class _RootShellTvState extends State<RootShellTv> with WidgetsBindingObserver {
                 //    so content is never hidden behind it; the expanded drawer
                 //    overlays this inset — Apple-TV style). ────────────────────
                 Positioned.fill(
-                  child: Focus(
-                    focusNode: _contentScope,
-                    onKeyEvent: _onContentKey,
-                    child: Padding(
-                      // Overscan-safe inset. Left gap clears the persistent
-                      // collapsed rail so page content never sits under it.
-                      padding: const EdgeInsets.fromLTRB(
-                        _kNavCollapsed + 16,
-                        24,
-                        24,
-                        16,
-                      ),
-                      child: TvShellTabScope(
-                        activeIndex: _index,
-                        child: IndexedStack(
-                          index: _index,
-                          children: [
-                            for (var i = 0; i < pages.length; i++)
-                              ExcludeFocus(
-                                excluding: i != _index,
-                                // IndexedStack exposes only its painted child.
-                                // Toggling ExcludeSemantics while tvOS dispatches a
-                                // scroll semantics action triggers Flutter's
-                                // _debugDoingSemantics assertion.
-                                child: _pageAt(i, pages),
+                  child: RepaintBoundary(
+                    child: ImageFiltered(
+                      enabled: _navOpen,
+                      imageFilter: ui.ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+                      child: TickerMode(
+                        enabled: !_navOpen,
+                        child: Focus(
+                          focusNode: _contentScope,
+                          onKeyEvent: _onContentKey,
+                          child: Padding(
+                            // Overscan-safe inset. Left gap clears the persistent
+                            // collapsed rail so page content never sits under it.
+                            padding: const EdgeInsets.fromLTRB(
+                              _kNavCollapsed + 4,
+                              24,
+                              24,
+                              16,
+                            ),
+                            child: TvShellTabScope(
+                              activeIndex: _index,
+                              child: IndexedStack(
+                                index: _index,
+                                children: [
+                                  for (var i = 0; i < pages.length; i++)
+                                    ExcludeFocus(
+                                      excluding: i != _index,
+                                      // IndexedStack exposes only its painted child.
+                                      // Toggling ExcludeSemantics while tvOS dispatches a
+                                      // scroll semantics action triggers Flutter's
+                                      // _debugDoingSemantics assertion.
+                                      child: _pageAt(i, pages),
+                                    ),
+                                ],
                               ),
-                          ],
+                            ),
+                          ),
                         ),
                       ),
                     ),
                   ),
                 ),
-                // ── Nav rail (icon strip ⇄ labelled drawer) ───────────────────
+                // Frost the whole page while the dock owns focus. Keep this
+                // below the rail so its labels and focus highlight stay sharp.
+                Positioned.fill(
+                  child: IgnorePointer(
+                    child: TweenAnimationBuilder<double>(
+                      tween: Tween<double>(begin: 0, end: _navOpen ? 1 : 0),
+                      duration: _dockDuration,
+                      curve: Curves.easeOutCubic,
+                      builder: (context, amount, _) {
+                        if (amount == 0) return const SizedBox.shrink();
+                        // Blur is a fixed, cached layer on the page. Only
+                        // tint opacity animates here; avoid a full-screen
+                        // backdrop blur recalculation on every animation frame.
+                        return ColoredBox(
+                          key: const ValueKey('tv-nav-acrylic'),
+                          color: AppColors.bg.withValues(alpha: 0.72 * amount),
+                        );
+                      },
+                    ),
+                  ),
+                ), // ── Nav rail (icon strip ⇄ labelled drawer) ───────────────────
                 Positioned(
                   top: 0,
                   bottom: 0,
@@ -802,24 +800,17 @@ class _RootShellTvState extends State<RootShellTv> with WidgetsBindingObserver {
                     child: AnimatedContainer(
                       key: const ValueKey('tv-nav-slide'),
                       width: _navOpen ? _kNavExpanded : _kNavCollapsed,
-                      duration: const Duration(milliseconds: 220),
+                      duration: _dockDuration,
                       curve: Curves.easeOutCubic,
                       child: ClipRect(
-                        child: DecoratedBox(
-                          decoration: BoxDecoration(
-                            gradient: LinearGradient(
-                              colors: [
-                                Colors.black.withValues(
-                                  alpha: _navOpen ? 0.86 : 0.55,
-                                ),
-                                Colors.black.withValues(
-                                  alpha: _navOpen ? 0.62 : 0.28,
-                                ),
-                                Colors.transparent,
-                              ],
-                            ),
+                        child: OverflowBox(
+                          alignment: AlignmentDirectional.centerStart,
+                          minWidth: _kNavExpanded,
+                          maxWidth: _kNavExpanded,
+                          child: SizedBox(
+                            width: _kNavExpanded,
+                            child: RepaintBoundary(child: _railColumn()),
                           ),
-                          child: _railColumn(),
                         ),
                       ),
                     ),
@@ -829,84 +820,6 @@ class _RootShellTvState extends State<RootShellTv> with WidgetsBindingObserver {
             ),
           ),
         ),
-      ),
-    );
-  }
-}
-
-/// Compact "Log out?" confirm card shown from the nav avatar. Kept top-level so
-/// it can be widget-tested without the shell/DI. The "Log out" action
-/// autofocuses; Back dismisses the hosting dialog.
-class TvLogoutSheet extends StatelessWidget {
-  const TvLogoutSheet({super.key, required this.onConfirm, this.onCancel});
-  final VoidCallback onConfirm;
-  final VoidCallback? onCancel;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: 300,
-      padding: const EdgeInsets.all(10),
-      decoration: BoxDecoration(
-        color: const Color(0xFF0E0F13),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: AppColors.hairline),
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          TvFocusable(
-            autofocus: true,
-            variant: TvFocusVariant.pill,
-            onTap: onConfirm,
-            builder: (focused) => Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 13),
-              child: Row(
-                children: [
-                  Icon(
-                    Icons.logout_rounded,
-                    size: 20,
-                    color: focused ? Colors.black : const Color(0xFFFF5C5C),
-                  ),
-                  const SizedBox(width: 12),
-                  Text(
-                    context.l10n.logOut,
-                    style: TextStyle(
-                      color: focused ? Colors.black : const Color(0xFFFF5C5C),
-                      fontSize: 16,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          TvFocusable(
-            variant: TvFocusVariant.pill,
-            onTap: onCancel ?? () {},
-            builder: (focused) => Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 13),
-              child: Row(
-                children: [
-                  Icon(
-                    Icons.close_rounded,
-                    size: 20,
-                    color: focused ? Colors.black : AppColors.textSecondary,
-                  ),
-                  const SizedBox(width: 12),
-                  Text(
-                    context.l10n.cancel,
-                    style: TextStyle(
-                      color: focused ? Colors.black : AppColors.textSecondary,
-                      fontSize: 16,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ],
       ),
     );
   }

@@ -1,3 +1,5 @@
+import 'package:watch_app/core/supabase/auth_user.dart';
+import 'package:watch_app/features/profiles/viewer_profiles_screen.dart';
 // ignore_for_file: invalid_use_of_protected_member
 
 import 'package:dio/dio.dart';
@@ -543,6 +545,43 @@ void main() {
     // The account/profile row (avatar + name / "Sign in") is keyed
     // 'tv-nav-avatar' and sits at the top of the nav.
     expect(find.byKey(const ValueKey('tv-nav-avatar')), findsOneWidget);
+    expect(
+      tester.getCenter(find.byKey(const ValueKey('tv-nav-group'))).dy,
+      closeTo(tester.getCenter(find.byType(RootShellTv)).dy, 0.5),
+    );
+    authCubit.emit(
+      const AuthState(
+        status: AuthStatus.authenticated,
+        user: AuthUser(
+          id: 'viewer',
+          name: 'Viewer',
+          email: 'viewer@example.com',
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    tester
+        .widget<TvFocusable>(find.byKey(const ValueKey('tv-nav-avatar')))
+        .onTap();
+    await tester.pumpAndSettle();
+    expect(find.text('Change profile?'), findsOneWidget);
+    expect(find.text('Log out'), findsOneWidget);
+    await tester.tap(find.text('Cancel'));
+    await tester.pumpAndSettle();
+    expect(find.byType(ViewerProfilesScreen), findsNothing);
+    tester
+        .widget<TvFocusable>(find.byKey(const ValueKey('tv-nav-avatar')))
+        .onTap();
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Change'));
+    await tester.pumpAndSettle();
+    expect(find.byType(ViewerProfilesScreen), findsOneWidget);
+    expect(
+      tester
+          .widget<ViewerProfilesScreen>(find.byType(ViewerProfilesScreen))
+          .selectionOnly,
+      isTrue,
+    );
   });
 
   testWidgets('RootShellTv does not show an active-source row in the rail', (
@@ -748,12 +787,22 @@ void main() {
       // arrowLeft → _onContentKey drops back onto the current page's rail
       // item once intra-content traversal is exhausted (ORIGINAL behaviour).
       await tester.sendKeyEvent(LogicalKeyboardKey.arrowLeft);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 80));
+      final openingWidth = tester
+          .getSize(find.byKey(const ValueKey('tv-nav-slide')))
+          .width;
+      expect(openingWidth, greaterThan(74));
+      expect(openingWidth, lessThan(224));
       await tester.pumpAndSettle();
       expect(
         tester.binding.focusManager.primaryFocus?.nearestScope?.debugLabel,
         'tv-rail-scope',
       );
       // Focus in the rail expands it into the labelled drawer.
+      final acrylic = find.byKey(const ValueKey('tv-nav-acrylic'));
+      expect(acrylic, findsOneWidget);
+      expect(tester.getSize(acrylic), tester.getSize(find.byType(RootShellTv)));
       expect(
         tester.getSize(find.byKey(const ValueKey('tv-nav-slide'))).width,
         moreOrLessEquals(224),
@@ -764,6 +813,7 @@ void main() {
       await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
       await tester.pumpAndSettle();
       expect(tester.binding.focusManager.primaryFocus, same(fieldFocus));
+      expect(acrylic, findsNothing);
       expect(
         tester.getSize(find.byKey(const ValueKey('tv-nav-slide'))).width,
         moreOrLessEquals(74),
@@ -825,4 +875,81 @@ void main() {
       expect(tester.binding.focusManager.primaryFocus, same(fieldFocus));
     },
   );
+  for (final surface in [const Size(1920, 1080), const Size(3840, 2160)]) {
+    for (final reduceMotion in [false, true]) {
+      testWidgets('Apple TV viewport $surface supports dock focus and acrylic '
+          '(reduce motion: $reduceMotion)', (tester) async {
+        await tester.binding.setSurfaceSize(surface);
+        addTearDown(() => tester.binding.setSurfaceSize(null));
+        await tester.pumpWidget(
+          MultiBlocProvider(
+            providers: [
+              BlocProvider<ActiveSourceCubit>.value(value: activeSource),
+              BlocProvider<AuthCubit>.value(value: authCubit),
+            ],
+            child: MaterialApp(
+              theme: ThemeData(platform: TargetPlatform.iOS),
+              builder: (context, child) => MediaQuery(
+                data: MediaQuery.of(
+                  context,
+                ).copyWith(disableAnimations: reduceMotion),
+                child: TvViewport(child: child!),
+              ),
+              home: const RootShellTv(),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        tester
+            .widget<TvFocusable>(
+              find.ancestor(
+                of: find.text('Search'),
+                matching: find.byType(TvFocusable),
+              ),
+            )
+            .onTap();
+        await tester.pumpAndSettle();
+        final contentFocus = tester.binding.focusManager.primaryFocus!;
+        // Siri Remote direction events also reach Flutter as focus intents.
+        Actions.invoke(
+          tester.element(find.byKey(const ValueKey('tv-nav-slide'))),
+          const DirectionalFocusIntent(TraversalDirection.left),
+        );
+        await tester.pumpAndSettle();
+        expect(
+          tester.binding.focusManager.primaryFocus?.nearestScope?.debugLabel,
+          'tv-rail-scope',
+        );
+        final acrylic = find.byKey(const ValueKey('tv-nav-acrylic'));
+        expect(acrylic, findsOneWidget);
+        expect(
+          tester.getRect(acrylic),
+          tester.getRect(find.byType(RootShellTv)),
+        );
+        final drawer = tester.widget<AnimatedContainer>(
+          find.byKey(const ValueKey('tv-nav-slide')),
+        );
+        expect(
+          drawer.duration,
+          reduceMotion ? Duration.zero : const Duration(milliseconds: 360),
+        );
+        final search = find.ancestor(
+          of: find.text('Search'),
+          matching: find.byType(TvFocusable),
+        );
+        final focusScale = tester.widget<AnimatedScale>(
+          find.descendant(of: search, matching: find.byType(AnimatedScale)),
+        );
+        expect(focusScale.scale, 1.06);
+        Actions.invoke(
+          tester.element(find.byKey(const ValueKey('tv-nav-slide'))),
+          const DirectionalFocusIntent(TraversalDirection.right),
+        );
+        await tester.pumpAndSettle();
+        expect(tester.binding.focusManager.primaryFocus, same(contentFocus));
+        expect(acrylic, findsNothing);
+        expect(tester.takeException(), isNull);
+      });
+    }
+  }
 }

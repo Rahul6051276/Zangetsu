@@ -624,6 +624,12 @@ class AppLocalizationsZh extends AppLocalizations {
   String get profile => '个人资料';
 
   @override
+  String get changeProfile => '切换个人资料？';
+
+  @override
+  String get chooseWhoIsWatching => '选择观看者。';
+
+  @override
   String get home => '首页';
 
   @override
@@ -5922,6 +5928,12 @@ class AppLocalizationsZhTw extends AppLocalizationsZh {
 
   @override
   String get profile => '個人檔案';
+
+  @override
+  String get changeProfile => '切換個人檔案？';
+
+  @override
+  String get chooseWhoIsWatching => '選擇觀看者。';
 
   @override
   String get home => '首頁';

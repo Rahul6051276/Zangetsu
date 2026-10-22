@@ -638,6 +638,12 @@ class AppLocalizationsAr extends AppLocalizations {
   String get profile => 'الملف الشخصي';
 
   @override
+  String get changeProfile => 'تغيير الملف الشخصي؟';
+
+  @override
+  String get chooseWhoIsWatching => 'اختر من يشاهد.';
+
+  @override
   String get home => 'الرئيسية';
 
   @override

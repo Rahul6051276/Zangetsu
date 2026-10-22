@@ -627,6 +627,12 @@ class AppLocalizationsJa extends AppLocalizations {
   String get profile => 'プロフィール';
 
   @override
+  String get changeProfile => 'プロフィールを切り替えますか？';
+
+  @override
+  String get chooseWhoIsWatching => '視聴者を選択してください。';
+
+  @override
   String get home => 'ホーム';
 
   @override

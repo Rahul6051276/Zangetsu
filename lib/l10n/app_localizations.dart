@@ -1317,6 +1317,18 @@ abstract class AppLocalizations {
   /// **'Profile'**
   String get profile;
 
+  /// No description provided for @changeProfile.
+  ///
+  /// In en, this message translates to:
+  /// **'Change profile?'**
+  String get changeProfile;
+
+  /// No description provided for @chooseWhoIsWatching.
+  ///
+  /// In en, this message translates to:
+  /// **'Choose who is watching.'**
+  String get chooseWhoIsWatching;
+
   /// No description provided for @home.
   ///
   /// In en, this message translates to:

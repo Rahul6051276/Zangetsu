@@ -645,6 +645,12 @@ class AppLocalizationsTr extends AppLocalizations {
   String get profile => 'Profil';
 
   @override
+  String get changeProfile => 'Profil değiştirilsin mi?';
+
+  @override
+  String get chooseWhoIsWatching => 'Kimin izlediğini seçin.';
+
+  @override
   String get home => 'Ana sayfa';
 
   @override

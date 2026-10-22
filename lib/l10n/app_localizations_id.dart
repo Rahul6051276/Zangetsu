@@ -643,6 +643,12 @@ class AppLocalizationsId extends AppLocalizations {
   String get profile => 'Profil';
 
   @override
+  String get changeProfile => 'Ganti profil?';
+
+  @override
+  String get chooseWhoIsWatching => 'Pilih siapa yang menonton.';
+
+  @override
   String get home => 'Beranda';
 
   @override

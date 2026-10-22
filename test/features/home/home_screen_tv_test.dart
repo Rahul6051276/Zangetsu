@@ -276,11 +276,11 @@ void main() {
     final scroll = find.byType(CustomScrollView).first;
     expect(
       tester.getTopLeft(hero).dx,
-      greaterThan(tester.getTopLeft(scroll).dx + 20),
+      closeTo(tester.getTopLeft(scroll).dx + 4, 0.5),
     );
     expect(
       tester.getSize(hero).width,
-      lessThan(tester.getSize(scroll).width - 40),
+      closeTo(tester.getSize(scroll).width - 32, 0.5),
     );
     expect(
       tester.getSize(hero).height,
