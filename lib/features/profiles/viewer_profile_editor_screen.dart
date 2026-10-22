@@ -17,6 +17,7 @@ import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_text.dart';
 import '../../core/ui/settings_widgets.dart';
 import '../auth/auth_cubit.dart';
+import '../auth/auth_screens.dart' show requireLogin;
 import 'klipy_gif_picker.dart';
 
 Future<void> openViewerProfileEditor(
@@ -221,6 +222,7 @@ class _ViewerProfileEditorScreenState extends State<ViewerProfileEditorScreen> {
   }
 
   Future<void> _pickPhoto() async {
+    if (!requireLogin(context, action: 'change a profile avatar')) return;
     final source = await showModalBottomSheet<_PhotoSource>(
       context: context,
       isScrollControlled: true,
@@ -349,6 +351,7 @@ class _ViewerProfileEditorScreenState extends State<ViewerProfileEditorScreen> {
     Uint8List bytes, {
     String failureMessage = "Couldn't upload photo",
   }) async {
+    if (!requireLogin(context, action: 'upload a profile avatar')) return;
     final token = sl<SupabaseService>().client.auth.currentSession?.accessToken;
     if (token == null) {
       setState(() => _photoError = failureMessage);
@@ -387,6 +390,7 @@ class _ViewerProfileEditorScreenState extends State<ViewerProfileEditorScreen> {
   }
 
   Future<void> _pickCover() async {
+    if (!requireLogin(context, action: 'upload a profile cover')) return;
     final picked = await ImagePicker().pickImage(
       source: ImageSource.gallery,
       maxWidth: 1600,
@@ -396,6 +400,7 @@ class _ViewerProfileEditorScreenState extends State<ViewerProfileEditorScreen> {
     if (picked == null || !mounted) return;
     final bytes = await picked.readAsBytes();
     if (!mounted) return;
+    if (!requireLogin(context, action: 'upload a profile cover')) return;
     final token = sl<SupabaseService>().client.auth.currentSession?.accessToken;
     if (token == null) {
       setState(() => _coverError = 'Sign in to upload a cover');

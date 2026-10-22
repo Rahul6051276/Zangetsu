@@ -8,6 +8,7 @@
 // and a manga/anime item forwards the matching MediaKind to the tracker hub.
 
 import 'package:flutter/material.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:watch_app/core/app_mode.dart';
 import 'package:watch_app/core/di/injector.dart';
@@ -16,9 +17,11 @@ import 'package:watch_app/core/models/provider_info.dart';
 import 'package:watch_app/core/models/watch_status.dart';
 import 'package:watch_app/core/playback/list_status_store.dart';
 import 'package:watch_app/core/playback/my_list.dart';
+import 'package:watch_app/core/supabase/auth_user.dart';
 import 'package:watch_app/core/tracker/tracker.dart';
 import 'package:watch_app/core/tracker/tracker_hub.dart';
 import 'package:watch_app/core/ui/list_status_sheet.dart';
+import 'package:watch_app/features/auth/auth_cubit.dart';
 
 /// Minimal in-memory [MyListStore] stand-in — no Hive box needed.
 class _FakeMyListStore implements MyListStore {
@@ -62,6 +65,25 @@ class _FakeListStatusStore implements ListStatusStore {
 
   @override
   final ValueNotifier<int> revision = ValueNotifier<int>(0);
+}
+
+class _TestAuthCubit extends Cubit<AuthState> implements AuthCubit {
+  _TestAuthCubit({required bool signedIn})
+    : super(
+        signedIn
+            ? const AuthState(
+                status: AuthStatus.authenticated,
+                user: AuthUser(
+                  id: 'test-user',
+                  name: 'Test user',
+                  email: 'test@example.com',
+                ),
+              )
+            : const AuthState(status: AuthStatus.unauthenticated),
+      );
+
+  @override
+  noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
 /// Records the [MediaKind] of every setStatus/removeFromList call. Mirrors
@@ -213,7 +235,11 @@ void main() {
     await sl.reset();
   });
 
-  Future<void> pumpSheet(WidgetTester tester, MediaItem item) async {
+  Future<void> pumpSheet(
+    WidgetTester tester,
+    MediaItem item, {
+    bool signedIn = true,
+  }) async {
     // The default 800x600 test viewport is too short for the real
     // showModalBottomSheet flow (unlike pumping ListStatusSheet directly
     // into a Scaffold body, which had the full height) — widen it so the
@@ -221,14 +247,19 @@ void main() {
     tester.view.physicalSize = const Size(800, 1400);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);
+    final auth = _TestAuthCubit(signedIn: signedIn);
+    addTearDown(auth.close);
 
     await tester.pumpWidget(
-      MaterialApp(
-        home: Scaffold(
-          body: Builder(
-            builder: (context) => ElevatedButton(
-              onPressed: () => showListStatusSheet(context, item: item),
-              child: const Text('open'),
+      BlocProvider<AuthCubit>.value(
+        value: auth,
+        child: MaterialApp(
+          home: Scaffold(
+            body: Builder(
+              builder: (context) => ElevatedButton(
+                onPressed: () => showListStatusSheet(context, item: item),
+                child: const Text('open'),
+              ),
             ),
           ),
         ),
@@ -237,6 +268,39 @@ void main() {
     await tester.tap(find.text('open'));
     await tester.pumpAndSettle();
   }
+
+  testWidgets(
+    'signed-out users can update a tracker without adding to My List',
+    (tester) async {
+      final fake = _FakeTracker();
+      sl.registerSingleton<TrackerHub>(TrackerHub([fake]));
+
+      await pumpSheet(tester, _animeItem, signedIn: false);
+      expect(find.byType(ListStatusSheet), findsOneWidget);
+      await tester.tap(find.text('Watching'));
+      await tester.pumpAndSettle();
+
+      expect(fake.lastSetStatusKind, MediaKind.anime);
+      expect(
+        (sl<MyListStore>() as _FakeMyListStore).contains(_animeItem),
+        isFalse,
+      );
+    },
+  );
+
+  testWidgets('signed-out users can still remove an existing local item', (
+    tester,
+  ) async {
+    final store = sl<MyListStore>() as _FakeMyListStore;
+    sl.registerSingleton<TrackerHub>(TrackerHub([]));
+    await store.add(_animeItem);
+
+    await pumpSheet(tester, _animeItem, signedIn: false);
+    await tester.tap(find.text('Remove from list'));
+    await tester.pumpAndSettle();
+
+    expect(store.contains(_animeItem), isFalse);
+  });
 
   testWidgets(
     'anime item keeps the unchanged long labels (Watching / Plan to Watch)',
@@ -353,14 +417,20 @@ void main() {
       tester.view.physicalSize = const Size(1280, 720);
       tester.view.devicePixelRatio = 1.0;
       addTearDown(tester.view.reset);
+      final auth = _TestAuthCubit(signedIn: true);
+      addTearDown(auth.close);
 
       await tester.pumpWidget(
-        MaterialApp(
-          home: Scaffold(
-            body: Builder(
-              builder: (context) => ElevatedButton(
-                onPressed: () => showListStatusSheet(context, item: _animeItem),
-                child: const Text('open'),
+        BlocProvider<AuthCubit>.value(
+          value: auth,
+          child: MaterialApp(
+            home: Scaffold(
+              body: Builder(
+                builder: (context) => ElevatedButton(
+                  onPressed: () =>
+                      showListStatusSheet(context, item: _animeItem),
+                  child: const Text('open'),
+                ),
               ),
             ),
           ),

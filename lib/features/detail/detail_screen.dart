@@ -27,6 +27,7 @@ import '../../core/ui/episode_unavailable_dialog.dart';
 import '../../core/zmode/playback_resolver.dart';
 import 'episode_sources_sheet.dart';
 import '../downloads/downloads_screen.dart';
+import '../auth/auth_cubit.dart';
 import 'epub_export_sheet.dart';
 import 'chapter_download_range_sheet.dart';
 import 'chapter_download_selection.dart';
@@ -1320,7 +1321,8 @@ class _DetailViewState extends State<_DetailView>
         it == ProviderType.manga) {
       // Same auto-add as the video path below — reading titles route out
       // through this early return, so without this they never got it.
-      if (sl<PlaybackPrefs>().autoAddToMyList &&
+      if (sl<AuthCubit>().state.isLoggedIn &&
+          sl<PlaybackPrefs>().autoAddToMyList &&
           !IncognitoMode.on &&
           !_myList.contains(widget.item)) {
         _myList.add(widget.item);
@@ -1333,7 +1335,8 @@ class _DetailViewState extends State<_DetailView>
     // Auto-add this title to My List (as Watching) on play, if the user opted
     // in — mirrors the tracker auto-scrobble. Skipped in incognito and when it's
     // already listed; fire-and-forget so it never delays playback.
-    if (sl<PlaybackPrefs>().autoAddToMyList &&
+    if (sl<AuthCubit>().state.isLoggedIn &&
+        sl<PlaybackPrefs>().autoAddToMyList &&
         !IncognitoMode.on &&
         !_myList.contains(widget.item)) {
       _myList.add(widget.item);

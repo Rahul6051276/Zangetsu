@@ -15,23 +15,27 @@ Widget _profileEditorHost(
   ValueChanged<ProfileEditorResult?> onResult, {
   ViewerProfile editingProfile = profile,
   KlipyGifService? klipyGifService,
-}) => MaterialApp(
-  home: Builder(
-    builder: (context) => Scaffold(
-      body: TextButton(
-        onPressed: () {
-          Navigator.of(context)
-              .push<ProfileEditorResult>(
-                MaterialPageRoute<ProfileEditorResult>(
-                  builder: (_) => ViewerProfileEditorScreen(
-                    profile: editingProfile,
-                    klipyGifService: klipyGifService,
+  bool signedIn = true,
+}) => BlocProvider<AuthCubit>(
+  create: (_) => _RecordingAuthCubit(signedIn: signedIn),
+  child: MaterialApp(
+    home: Builder(
+      builder: (context) => Scaffold(
+        body: TextButton(
+          onPressed: () {
+            Navigator.of(context)
+                .push<ProfileEditorResult>(
+                  MaterialPageRoute<ProfileEditorResult>(
+                    builder: (_) => ViewerProfileEditorScreen(
+                      profile: editingProfile,
+                      klipyGifService: klipyGifService,
+                    ),
                   ),
-                ),
-              )
-              .then(onResult);
-        },
-        child: const Text('Open editor'),
+                )
+                .then(onResult);
+          },
+          child: const Text('Open editor'),
+        ),
       ),
     ),
   ),
@@ -41,19 +45,23 @@ Widget _profileStoreEditorHost(
   ViewerProfileStore store, {
   ViewerProfile editingProfile = profile,
   ValueChanged<Future<void>>? onOpened,
-}) => MaterialApp(
-  home: Builder(
-    builder: (context) => Scaffold(
-      body: TextButton(
-        onPressed: () {
-          final future = openViewerProfileEditor(
-            context,
-            store,
-            profile: editingProfile,
-          );
-          onOpened?.call(future);
-        },
-        child: const Text('Open editor'),
+  bool signedIn = true,
+}) => BlocProvider<AuthCubit>(
+  create: (_) => _RecordingAuthCubit(signedIn: signedIn),
+  child: MaterialApp(
+    home: Builder(
+      builder: (context) => Scaffold(
+        body: TextButton(
+          onPressed: () {
+            final future = openViewerProfileEditor(
+              context,
+              store,
+              profile: editingProfile,
+            );
+            onOpened?.call(future);
+          },
+          child: const Text('Open editor'),
+        ),
       ),
     ),
   ),
@@ -116,6 +124,24 @@ void main() {
       ),
       findsOneWidget,
     );
+  });
+
+  testWidgets('signed-out users cannot open avatar or cover image pickers', (
+    tester,
+  ) async {
+    await tester.pumpWidget(_profileEditorHost((_) {}, signedIn: false));
+    await tester.tap(find.text('Open editor'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Choose avatar'));
+    await tester.pumpAndSettle();
+    expect(find.text('Photo from gallery'), findsNothing);
+    expect(find.byType(SnackBar), findsOneWidget);
+
+    await _scrollTo(tester, find.text('Add cover'));
+    await tester.tap(find.text('Add cover'));
+    await tester.pumpAndSettle();
+    expect(find.byType(SnackBar), findsOneWidget);
   });
 
   testWidgets('editor is a full page and returns the saved values', (
@@ -496,12 +522,18 @@ void main() {
 }
 
 class _RecordingAuthCubit extends Cubit<AuthState> implements AuthCubit {
-  _RecordingAuthCubit()
+  _RecordingAuthCubit({bool signedIn = true})
     : super(
-        const AuthState(
-          status: AuthStatus.authenticated,
-          user: AuthUser(id: 'user', name: 'Home', email: 'user@example.com'),
-        ),
+        signedIn
+            ? const AuthState(
+                status: AuthStatus.authenticated,
+                user: AuthUser(
+                  id: 'user',
+                  name: 'Home',
+                  email: 'user@example.com',
+                ),
+              )
+            : const AuthState(status: AuthStatus.unauthenticated),
       );
 
   String? renamedTo;
