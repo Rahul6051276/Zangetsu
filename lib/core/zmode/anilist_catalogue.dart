@@ -3,7 +3,7 @@ import 'package:dio/dio.dart';
 import '../models/episode.dart';
 import '../models/home_section.dart';
 import '../models/media_detail.dart';
-
+import '../anilist/anilist_network_policy.dart';
 import '../anilist/anilist_title.dart';
 import '../models/media_item.dart';
 import '../models/provider_info.dart';
@@ -33,32 +33,35 @@ class AniListCatalogue implements AnimeCatalogue {
 
   static const _endpoint = 'https://graphql.anilist.co';
 
-  /// Production transport. Provider failures must escape so the repository can
-  /// try its backup instead of reporting an outage as a successful empty search.
+  /// Production transport. Same shape as `AiringService`.
   static Gql dioGql(Dio dio) => (query, variables) async {
-    final res = await dio.post<dynamic>(
-      _endpoint,
-      data: {'query': query, 'variables': variables},
-      options: Options(
-        headers: const {'Accept': 'application/json'},
-        validateStatus: (s) => s != null && s < 500,
-      ),
-    );
-    final body = res.data;
-    final errors = body is Map ? body['errors'] : null;
-    if ((res.statusCode ?? 500) >= 400 ||
-        (errors is List && errors.isNotEmpty) ||
-        body is! Map ||
-        body['data'] is! Map) {
-      throw DioException(
-        requestOptions: res.requestOptions,
-        response: res,
-        type: DioExceptionType.badResponse,
-        message: 'AniList catalogue request failed',
+    try {
+      final res = await dio.post<dynamic>(
+        _endpoint,
+        data: {'query': query, 'variables': variables},
+        options: Options(
+          headers: const {'Accept': 'application/json'},
+          validateStatus: (s) => s != null && s < 500,
+        ),
       );
-    }
-    return Map<String, dynamic>.from(body['data'] as Map);
+      final data = res.data;
+      if (data is Map && data['data'] is Map) {
+        return Map<String, dynamic>.from(data['data'] as Map);
+      }
+    } on DioException catch (e) {
+      // A transport failure is not "no data". Swallowing it left the caller
+      // holding an empty list it could not tell apart from a quiet catalogue,
+      // so Home could never distinguish an offline phone from a provider
+      // outage — and told people with no network to switch metadata provider.
+      //
+      // A response that DID arrive still returns null: a 4xx/5xx with a body,
+      // or a GraphQL error envelope, is the server answering, and every caller
+      // already handles that as "nothing came back".
+      if (e.response == null || aniListRateLimitOf(e) != null) rethrow;
+    } catch (_) {}
+    return null;
   };
+
   static const _fields =
       'id idMal title{romaji english native} coverImage{large extraLarge} '
       'bannerImage episodes chapters status genres description(asHtml:false) '
@@ -172,7 +175,6 @@ class AniListCatalogue implements AnimeCatalogue {
   /// one per entry in [_rows] — instead of a round-trip per row. A malformed
   /// or partial response (missing alias, non-list `media`, or no response at
   /// all) just drops that row rather than throwing.
-  @override
   Future<List<HomeSection>> home(ZKind kind) async {
     final rows = _rows(kind);
     final query = rows.indexed
@@ -213,7 +215,6 @@ class AniListCatalogue implements AnimeCatalogue {
     return _itemsFromPage(data?['Page'], kind);
   }
 
-  @override
   Future<List<MediaItem>> search(String q, ZKind kind) =>
       searchFiltered(q, kind);
 
@@ -318,7 +319,6 @@ class AniListCatalogue implements AnimeCatalogue {
     MetaSort.title => 'TITLE_ROMAJI',
   };
 
-  @override
   Future<MediaDetail> detail(ZCanonical c) async {
     final (arg, vars) = _idArg(c);
     final q =
@@ -369,7 +369,6 @@ class AniListCatalogue implements AnimeCatalogue {
     );
   }
 
-  @override
   Future<List<Episode>> episodes(ZCanonical c) async =>
       (await detail(c)).episodes;
 

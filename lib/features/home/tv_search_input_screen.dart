@@ -24,6 +24,8 @@ class TvSearchInputScreen extends StatefulWidget {
     this.requestKey,
     this.onQueryChanged,
     this.onSearchSubmitted,
+    this.submittedResults,
+    this.submittedLoading = false,
   });
 
   /// Draft to restore when entering search.
@@ -55,6 +57,10 @@ class TvSearchInputScreen extends StatefulWidget {
 
   /// Records explicit submissions without closing inline search.
   final ValueChanged<String>? onSearchSubmitted;
+
+  /// Results from the owning search bloc after an explicit submission.
+  final List<MediaItem>? submittedResults;
+  final bool submittedLoading;
 
   @override
   State<TvSearchInputScreen> createState() => _TvSearchInputScreenState();
@@ -198,7 +204,9 @@ class _TvSearchInputScreenState extends State<TvSearchInputScreen> {
       widget.onSearchSubmitted?.call(_query);
       _recommendCache.remove(_query.trim().toLowerCase());
       setState(() {});
-      _refreshRecommendations(immediate: true, force: true);
+      if (widget.submittedResults == null) {
+        _refreshRecommendations(immediate: true, force: true);
+      }
       return;
     }
     if (_closing) return;
@@ -354,6 +362,13 @@ class _TvSearchInputScreenState extends State<TvSearchInputScreen> {
   Widget _recommendationPanel(BuildContext context) {
     final panelHeight = widget.inlineSearch ? 200.0 : 150.0;
     final cardWidth = widget.inlineSearch ? 90.0 : 150.0;
+    final externalResults = _submitted && widget.submittedResults != null;
+    final results = externalResults
+        ? widget.submittedResults!
+        : _recommendations;
+    final loading = externalResults
+        ? widget.submittedLoading
+        : _loadingRecommendations;
     if ((!_submitted && _query.trim().characters.length < 3) ||
         widget.loadRecommendations == null) {
       return SizedBox(height: panelHeight);
@@ -375,7 +390,7 @@ class _TvSearchInputScreenState extends State<TvSearchInputScreen> {
           ),
           const SizedBox(height: 6),
           Expanded(
-            child: _loadingRecommendations
+            child: loading
                 ? const Center(
                     child: SizedBox(
                       width: 22,
@@ -383,7 +398,7 @@ class _TvSearchInputScreenState extends State<TvSearchInputScreen> {
                       child: CircularProgressIndicator(strokeWidth: 2),
                     ),
                   )
-                : _recommendations.isEmpty
+                : results.isEmpty
                 ? Align(
                     alignment: Alignment.topLeft,
                     child: Text(
@@ -399,10 +414,10 @@ class _TvSearchInputScreenState extends State<TvSearchInputScreen> {
                 : ListView.separated(
                     scrollDirection: Axis.horizontal,
                     clipBehavior: Clip.none,
-                    itemCount: _recommendations.length,
+                    itemCount: results.length,
                     separatorBuilder: (_, _) => const SizedBox(width: 12),
                     itemBuilder: (context, index) {
-                      final item = _recommendations[index];
+                      final item = results[index];
                       // Search uses the same cover as the mobile poster cards.
                       // A hero banner is a different image, not a wider poster.
                       final artwork = item.cover;
@@ -420,7 +435,9 @@ class _TvSearchInputScreenState extends State<TvSearchInputScreen> {
                           onTap: () {
                             widget.onRecommendationSelected?.call(item);
                             if (widget.inlineSearch) {
-                              widget.onSearchSubmitted?.call(_query);
+                              if (widget.submittedResults == null) {
+                                widget.onSearchSubmitted?.call(_query);
+                              }
                               return;
                             }
                             _query = title;

@@ -583,18 +583,40 @@ class MetadataRepository implements CatalogueRepository {
     if (filters != null && filters.adult && !_adultAllowed()) {
       filters = filters.copyWith(adult: false);
     }
-    final items = await _searchWithContingency(
-      query,
-      k,
-      () async => _isTmdb(k)
-          ? await _viaVideo(
-              (c) => c.searchFiltered(query, filters: filters, page: page),
-            )
+    final items = _isTmdb(k)
+        ? await _viaVideo(
+            (c) => c.searchFiltered(query, filters: filters, page: page),
+          )
+        : await _viaAnime(
+            (c) => c.searchFiltered(query, k, filters: filters, page: page),
+          );
+    items.forEach(_remember);
+    return items;
+  }
+
+  /// TV's optional source recovery; ordinary catalogue search keeps its
+  /// existing provider and filter behavior on phones.
+  Future<List<MediaItem>> tvSearchWithSourceRecovery(
+    String query, {
+    MetaFilters? filters,
+  }) async {
+    if (query.trim().isEmpty ||
+        (filters?.isNotEmpty ?? false) ||
+        _searchCandidates(_browseKind()).isEmpty) {
+      return searchFiltered(query, filters: filters);
+    }
+    final kind = _browseKind();
+    final items = await _searchWithContingency(query, kind, () async {
+      final metadata = _isTmdb(kind)
+          ? await _viaVideo((c) => c.searchFiltered(query))
           : await _viaAnime(
-              (c) => c.searchFiltered(query, k, filters: filters, page: page),
+              (c) => c.searchFiltered(query, kind),
+              treatAsFailure: (items) => items.isEmpty,
               requestTimeout: const Duration(seconds: 4),
-            ),
-    );
+            );
+      if (metadata.isEmpty) throw StateError('No metadata results');
+      return metadata;
+    });
     items.forEach(_remember);
     return items;
   }
@@ -657,16 +679,9 @@ class MetadataRepository implements CatalogueRepository {
     String? sourceId,
   }) async {
     final k = _browseKind();
-    final items = await _searchWithContingency(
-      query,
-      k,
-      () async => _isTmdb(k)
-          ? await _viaVideo((c) => c.search(query))
-          : await _viaAnime(
-              (c) => c.search(query, k),
-              requestTimeout: const Duration(seconds: 4),
-            ),
-    );
+    final items = _isTmdb(k)
+        ? await _viaVideo((c) => c.search(query))
+        : await _viaAnime((c) => c.search(query, k));
     items.forEach(_remember);
     return items;
   }

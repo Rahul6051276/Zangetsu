@@ -20,6 +20,7 @@ import 'package:watch_app/core/zmode/metadata_repository.dart';
 import 'package:watch_app/core/zmode/metadata_filters.dart';
 import 'package:watch_app/core/ui/dock_visibility.dart';
 import 'package:watch_app/features/home/search_screen_tv.dart';
+import 'package:watch_app/features/home/tv_search_input_screen.dart';
 import 'package:watch_app/features/search/bloc/search_bloc.dart';
 import 'package:watch_app/features/search/bloc/search_event.dart';
 import 'package:watch_app/features/search/bloc/search_state.dart';
@@ -137,6 +138,16 @@ class _StubSourceRepository implements SourceRepository {
 class _FakeSearchBloc extends SearchBloc {
   final submittedQueries = <String?>[];
 
+  void showResults(List<SourceResultGroup> groups) {
+    emit(
+      state.copyWith(
+        query: 'Naruto',
+        status: SearchStatus.success,
+        groups: groups,
+      ),
+    );
+  }
+
   @override
   void add(SearchEvent event) {
     if (event is SearchRunRequested) {
@@ -197,6 +208,12 @@ class _FiltersRepo implements MetadataRepository {
     requests.add((query: query, filters: filters));
     return const [];
   }
+
+  @override
+  Future<List<MediaItem>> tvSearchWithSourceRecovery(
+    String query, {
+    MetaFilters? filters,
+  }) => searchFiltered(query, filters: filters);
 
   @override
   noSuchMethod(Invocation i) => super.noSuchMethod(i);
@@ -341,10 +358,96 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.byKey(const ValueKey('tv-key-A')), findsOneWidget);
       expect(find.byType(TextField), findsNothing);
-      expect(bloc.submittedQueries, isEmpty);
+      expect(bloc.submittedQueries, ['A']);
       expect(shellBackIntercepted.value, isFalse);
     },
   );
+
+  testWidgets('New source search submits through the multi-source bloc', (
+    tester,
+  ) async {
+    GetIt.I.registerSingleton<SearchPrefs>(_NewSearchPrefs());
+    addTearDown(() => GetIt.I.unregister<SearchPrefs>());
+    final bloc = _FakeSearchBloc(SearchState(currentSourceOnly: false));
+    addTearDown(bloc.close);
+    await tester.pumpWidget(_buildUnderTest(bloc, initialQuery: 'Naruto'));
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('tv-key-done')));
+    await tester.pump();
+    expect(bloc.submittedQueries, ['Naruto']);
+    bloc.showResults(const [
+      SourceResultGroup(
+        sourceId: 'first',
+        sourceName: 'First',
+        items: [
+          MediaItem(
+            id: 'a',
+            title: 'Naruto A',
+            url: '/a',
+            type: ProviderType.anime,
+            sourceId: 'first',
+          ),
+        ],
+      ),
+      SourceResultGroup(
+        sourceId: 'second',
+        sourceName: 'Second',
+        items: [
+          MediaItem(
+            id: 'b',
+            title: 'Naruto B',
+            url: '/b',
+            type: ProviderType.anime,
+            sourceId: 'second',
+          ),
+        ],
+      ),
+    ]);
+    await tester.pump();
+    expect(
+      find.byKey(const ValueKey('tv-recommendation-first-a')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('tv-recommendation-second-b')),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('opening a submitted source result does not search again', (
+    tester,
+  ) async {
+    const item = MediaItem(
+      id: 'naruto',
+      title: 'Naruto',
+      url: '/naruto',
+      type: ProviderType.anime,
+      sourceId: 'first',
+    );
+    final submitted = <String>[];
+    MediaItem? selected;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: TvSearchInputScreen(
+          initialQuery: 'Naruto',
+          compactStyle: true,
+          inlineSearch: true,
+          loadRecommendations: (_) async => const [],
+          submittedResults: const [item],
+          onSearchSubmitted: submitted.add,
+          onRecommendationSelected: (value) => selected = value,
+        ),
+      ),
+    );
+    await tester.tap(find.byKey(const ValueKey('tv-key-done')));
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.byKey(const ValueKey('tv-recommendation-first-naruto')),
+    );
+    await tester.pump();
+    expect(submitted, ['Naruto']);
+    expect(selected, item);
+  });
 
   testWidgets('one Back from New returns Home without a Classic frame', (
     tester,

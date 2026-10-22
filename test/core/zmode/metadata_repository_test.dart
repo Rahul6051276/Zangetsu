@@ -22,6 +22,7 @@ import 'package:watch_app/core/ui/streaming_prefs.dart';
 import 'package:watch_app/core/zmode/match_store.dart';
 import 'package:watch_app/core/zmode/zmode_source_prefs.dart';
 import 'package:watch_app/core/zmode/metadata_repository.dart';
+import 'package:watch_app/core/zmode/metadata_filters.dart';
 import 'package:watch_app/core/zmode/playback_resolver.dart';
 import 'package:watch_app/core/zmode/source_matcher.dart';
 import 'package:watch_app/core/zmode/tmdb_catalogue.dart';
@@ -651,74 +652,70 @@ void main() {
   });
 
   for (final status in [403, 200, 429, 408]) {
-    test(
-      'AniList outage $status falls back for plain and filtered search',
-      () async {
-        var backupCalls = 0;
-        final dio = Dio();
-        dio.interceptors.add(
-          InterceptorsWrapper(
-            onRequest: (request, handler) {
-              final anilist = request.uri.host == 'graphql.anilist.co';
-              if (anilist && status == 408) {
-                return; // A provider that never responds.
-              }
-              if (!anilist) backupCalls++;
-              handler.resolve(
-                Response(
-                  requestOptions: request,
-                  statusCode: anilist ? status : 200,
-                  data: anilist
-                      ? {
-                          'errors': [
-                            {
-                              'message': 'API temporarily disabled',
-                              'status': status,
+    test('TV search recovers from AniList outage $status', () async {
+      var backupCalls = 0;
+      final dio = Dio();
+      dio.interceptors.add(
+        InterceptorsWrapper(
+          onRequest: (request, handler) {
+            final anilist = request.uri.host == 'graphql.anilist.co';
+            if (anilist && status == 408) {
+              return; // A provider that never responds.
+            }
+            if (!anilist) backupCalls++;
+            handler.resolve(
+              Response(
+                requestOptions: request,
+                statusCode: anilist ? status : 200,
+                data: anilist
+                    ? {
+                        'errors': [
+                          {
+                            'message': 'API temporarily disabled',
+                            'status': status,
+                          },
+                        ],
+                      }
+                    : {
+                        'data': [
+                          {
+                            'node': {
+                              'id': 20,
+                              'title': 'Naruto',
+                              'media_type': 'tv',
                             },
-                          ],
-                        }
-                      : {
-                          'data': [
-                            {
-                              'node': {
-                                'id': 20,
-                                'title': 'Naruto',
-                                'media_type': 'tv',
-                              },
-                            },
-                          ],
-                        },
-                ),
-              );
-            },
-          ),
-        );
-        addTearDown(() => dio.close(force: true));
-        final r = _metaRepo(
+                          },
+                        ],
+                      },
+              ),
+            );
+          },
+        ),
+      );
+      addTearDown(() => dio.close(force: true));
+      final r = _metaRepo(
+        sources: src,
+        store: store,
+        prefs: prefs,
+        browseKind: () => ZKind.anime,
+        matcher: SourceMatcher(
           sources: src,
           store: store,
           prefs: prefs,
-          browseKind: () => ZKind.anime,
-          matcher: SourceMatcher(
-            sources: src,
-            store: store,
-            prefs: prefs,
-            candidates: (_) => [(id: 'allanime', name: 'AllAnime')],
-          ),
-          anilist: AniListCatalogue(AniListCatalogue.dioGql(dio)),
-          mal: MalCatalogue(dio),
-        );
-        expect((await r.search('Naruto')).single.title, 'Naruto');
-        expect((await r.searchFiltered('Naruto')).single.title, 'Naruto');
-        final classic = await r.searchStatus('Naruto');
-        expect(classic.outcome, SourceOutcome.ok);
-        expect(classic.items.single.title, 'Naruto');
-        expect(backupCalls, 3);
-      },
-    );
+          candidates: (_) => [(id: 'allanime', name: 'AllAnime')],
+        ),
+        anilist: AniListCatalogue(AniListCatalogue.dioGql(dio)),
+        mal: MalCatalogue(dio),
+      );
+      expect(
+        (await r.tvSearchWithSourceRecovery('Naruto')).single.title,
+        'Naruto',
+      );
+      expect(backupCalls, 1);
+    });
   }
   test(
-    'both metadata providers down uses source results in both search paths',
+    'TV search uses installed source when both metadata providers are down',
     () async {
       final source = _ContingencySource();
       final dio = Dio();
@@ -757,18 +754,11 @@ void main() {
         mal: MalCatalogue(dio),
         onProviderFallback: (name) => label = name,
       );
-      for (final items in [
-        await r.search('Naruto'),
-        await r.searchFiltered('Naruto'),
-      ]) {
-        expect(items.single.title, 'Naruto');
-        expect(items.single.sourceId, 'contingency');
-        expect(items.single.url, 'https://source.example/naruto');
-      }
-      final classic = await r.searchStatus('Naruto');
-      expect(classic.outcome, SourceOutcome.ok);
-      expect(classic.items.single.sourceId, 'contingency');
-      expect(source.searches, 3);
+      final items = await r.tvSearchWithSourceRecovery('Naruto');
+      expect(items.single.title, 'Naruto');
+      expect(items.single.sourceId, 'contingency');
+      expect(items.single.url, 'https://source.example/naruto');
+      expect(source.searches, 1);
       expect(label, contains('source catalogue'));
     },
   );
@@ -797,6 +787,33 @@ void main() {
       );
       expect(await r.search('no such title'), isEmpty);
       expect(await r.searchFiltered('no such title'), isEmpty);
+      expect(source.searches, 0);
+    },
+  );
+  test(
+    'filtered mobile search never substitutes unfiltered source items',
+    () async {
+      final source = _ContingencySource();
+      final r = _metaRepo(
+        sources: source,
+        store: store,
+        prefs: prefs,
+        browseKind: () => ZKind.anime,
+        candidates: (_) => [(id: 'contingency', name: 'Installed source')],
+        matcher: SourceMatcher(
+          sources: source,
+          store: store,
+          prefs: prefs,
+          candidates: (_) => [(id: 'contingency', name: 'Installed source')],
+        ),
+        anilist: AniListCatalogue((q, v) async => throw StateError('offline')),
+      );
+      try {
+        await r.searchFiltered(
+          'Naruto',
+          filters: const MetaFilters(genres: ['Action']),
+        );
+      } catch (_) {}
       expect(source.searches, 0);
     },
   );
@@ -847,7 +864,8 @@ void main() {
               initialQuery: 'Naruto',
               compactStyle: true,
               inlineSearch: true,
-              loadRecommendations: (query) => repository.searchFiltered(query),
+              loadRecommendations: (query) =>
+                  repository.tvSearchWithSourceRecovery(query),
               onRecommendationSelected: (item) => opened = item,
             ),
           ),

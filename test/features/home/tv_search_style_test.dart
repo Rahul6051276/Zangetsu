@@ -124,9 +124,8 @@ void main() {
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
     await tester.runAsync(() async {
-      final bytes = await File('C:/Windows/Fonts/segoeui.ttf').readAsBytes();
       final loader = FontLoader('PreviewSans')
-        ..addFont(Future.value(ByteData.sublistView(bytes)));
+        ..addFont(rootBundle.load('assets/fonts/Inter.ttf'));
       await loader.load();
       final icons = FontLoader('MaterialIcons')
         ..addFont(rootBundle.load('fonts/MaterialIcons-Regular.otf'));
@@ -187,9 +186,7 @@ void main() {
     await tester.runAsync(() async {
       final image = await boundary.toImage(pixelRatio: 1);
       final data = await image.toByteData(format: ui.ImageByteFormat.png);
-      await File(
-        'C:/Users/USER1/codex/zangetsu/outputs/tv-new-search-style-preview.png',
-      ).writeAsBytes(data!.buffer.asUint8List());
+      expect(data, isNotNull);
       image.dispose();
     });
   });

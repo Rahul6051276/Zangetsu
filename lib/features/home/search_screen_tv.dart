@@ -177,7 +177,7 @@ class _SearchScreenTvState extends State<SearchScreenTv> {
   /// Searches the current catalogue with the same source and genre restrictions.
   Future<List<MediaItem>> _loadTypingRecommendations(String query) async {
     if (_isLibrary && sl.isRegistered<MetadataRepository>()) {
-      return sl<MetadataRepository>().searchFiltered(
+      return sl<MetadataRepository>().tvSearchWithSourceRecovery(
         query,
         filters: _metaFilters,
       );
@@ -250,8 +250,16 @@ class _SearchScreenTvState extends State<SearchScreenTv> {
 
   /// Records submitted drafts without navigating away from inline search.
   Future<void> _recordNewSearch(String query) async {
+    if (!_isLibrary && query.trim().isNotEmpty) {
+      context.read<SearchBloc>().add(SearchRunRequested(query));
+    }
     await widget.history?.add(query);
     if (mounted) setState(() {});
+  }
+
+  void _openNewSearchDetail(MediaItem item) {
+    if (!_isLibrary) widget.history?.add(_controller.text);
+    _openDetail(item);
   }
 
   Future<void> _openMetaFilters() async {
@@ -767,7 +775,7 @@ class _SearchScreenTvState extends State<SearchScreenTv> {
   @override
   Widget build(BuildContext context) {
     if (_newSearch) {
-      return TvSearchInputScreen(
+      Widget keyboard(SearchState? state) => TvSearchInputScreen(
         key: const ValueKey('tv-new-search-page'),
         initialQuery: _controller.text,
         compactStyle: true,
@@ -779,7 +787,15 @@ class _SearchScreenTvState extends State<SearchScreenTv> {
         loadRecommendations: _loadTypingRecommendations,
         onQueryChanged: (query) => _controller.text = query,
         onSearchSubmitted: _recordNewSearch,
-        onRecommendationSelected: _openDetail,
+        onRecommendationSelected: _openNewSearchDetail,
+        submittedResults: state == null
+            ? null
+            : [for (final group in state.sortedVisibleGroups) ...group.items],
+        submittedLoading: state?.status == SearchStatus.loading,
+      );
+      if (_isLibrary) return keyboard(null);
+      return BlocBuilder<SearchBloc, SearchState>(
+        builder: (context, state) => keyboard(state),
       );
     }
     final hint = searchHintForScope(context, widget.scope);
