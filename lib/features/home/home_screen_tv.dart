@@ -29,7 +29,6 @@ import '../../core/playback/playback_prefs.dart';
 import '../../core/playback/resume_store.dart';
 import '../../core/playback/title_prefs.dart';
 import '../../core/playback/watch_history.dart';
-import '../../core/provider/provider_manager.dart';
 import '../../core/provider/provider_registry.dart';
 import '../../core/repository/catalogue_repository.dart';
 import '../../core/repository/source_repository.dart';
@@ -382,29 +381,22 @@ class _HomeScreenTvState extends State<HomeScreenTv> {
       '[tv-home] _resume · sourceId=${e.sourceId} '
       'showUrl=${e.showUrl} episodeId=${e.episodeId}',
     );
-    // On TV the QuickJS runtime is empty at boot (loadAll is skipped) and
-    // providers load on demand — ensure the JS provider is loaded before
-    // hitting _providerFor, which would otherwise throw "Provider not loaded".
+    // On TV the QuickJS runtime is empty at boot (loadAll is skipped), so use
+    // the source-aware loader: it loads JS providers and leaves native sources
+    // to their own managers.
     // Metadata pseudo-sources (zm) don't live in the runtime — they resolve
     // through CatalogueRouter → PlaybackResolver, so skip the check for them.
     if (e.sourceId != ZmodeIds.sourceId &&
-        sl<ProviderManager>().get(e.sourceId) == null) {
-      debugPrint('[tv-home] _resume · loading runtime for ${e.sourceId} ...');
-      final ok = await sl<ProviderRegistry>()
-          .ensureRuntimeLoaded(e.sourceId)
-          .catchError((_) => false);
-      if (!ok || sl<ProviderManager>().get(e.sourceId) == null) {
-        debugPrint('[tv-home] _resume · RUNTIME LOAD FAILED for ${e.sourceId}');
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Could not load ${e.sourceId} — skipping resume'),
-            ),
-          );
-        }
-        return;
+        !await sl<SourceRepository>().ensureSourceLoaded(e.sourceId)) {
+      debugPrint('[tv-home] _resume · source load FAILED for ${e.sourceId}');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Could not load ${e.sourceId} — skipping resume'),
+          ),
+        );
       }
-      debugPrint('[tv-home] _resume · runtime loaded for ${e.sourceId}');
+      return;
     }
     List<Episode> episodes;
     try {

@@ -13,6 +13,8 @@ import 'package:watch_app/core/models/media_item.dart';
 import 'package:watch_app/core/models/provider_info.dart';
 import 'package:watch_app/core/playback/watch_history.dart';
 import 'package:watch_app/core/provider/cloudstream_provider.dart';
+import 'package:watch_app/core/provider/provider_manager.dart';
+import 'package:watch_app/core/provider/provider_registry.dart';
 import 'package:watch_app/core/repository/catalogue_repository.dart';
 import 'package:watch_app/core/repository/source_repository.dart';
 import 'package:watch_app/core/state/active_source_cubit.dart';
@@ -72,7 +74,14 @@ class _BlockingEpisodesRepository extends _StubSourceRepository {
   _BlockingEpisodesRepository(super._sections);
 
   final episodesResult = Completer<List<Episode>>();
+  final sourceLoadChecks = <String>[];
   int episodeCalls = 0;
+
+  @override
+  Future<bool> ensureSourceLoaded(String sourceId) async {
+    sourceLoadChecks.add(sourceId);
+    return true;
+  }
 
   @override
   Future<List<Episode>> episodes(
@@ -83,6 +92,28 @@ class _BlockingEpisodesRepository extends _StubSourceRepository {
     episodeCalls++;
     return episodesResult.future;
   }
+}
+
+class _EmptyProviderManager implements ProviderManager {
+  @override
+  JsProvider? get(String id) => null;
+
+  @override
+  dynamic noSuchMethod(Invocation i) => super.noSuchMethod(i);
+}
+
+class _UnavailableJsRegistry implements ProviderRegistry {
+  @override
+  String? typeOf(String sourceId) => 'anime';
+
+  @override
+  Future<bool> ensureRuntimeLoaded(
+    String sourceId, {
+    Duration timeout = const Duration(seconds: 8),
+  }) async => false;
+
+  @override
+  dynamic noSuchMethod(Invocation i) => super.noSuchMethod(i);
 }
 
 class _WarmMetadataRepository implements MetadataRepository {
@@ -498,6 +529,67 @@ void main() {
       if (await dir.exists()) await dir.delete(recursive: true);
     });
     sl.unregister<WatchHistory>();
+  });
+
+  testWidgets('TV Continue Watching routes CloudStream entries natively', (
+    tester,
+  ) async {
+    final repo = _BlockingEpisodesRepository(const []);
+    sl.unregister<CatalogueRepository>();
+    sl.registerSingleton<CatalogueRepository>(repo);
+    sl.registerSingleton<SourceRepository>(repo);
+    sl.registerSingleton<ProviderManager>(_EmptyProviderManager());
+    sl.registerSingleton<ProviderRegistry>(_UnavailableJsRegistry());
+
+    late Directory dir;
+    await tester.runAsync(() async {
+      dir = await Directory.systemTemp.createTemp('tv_resume_cloudstream');
+      Hive.init(dir.path);
+      await WatchHistory.init();
+    });
+    final history = WatchHistory(SupabaseService(), () => null);
+    sl.registerSingleton<WatchHistory>(history);
+    await tester.runAsync(
+      () => history.save(
+        HistoryEntry(
+          sourceId: 'cs:StreamPlay-Anime',
+          showId: 'cloudstream-show',
+          showTitle: 'CloudStream Show',
+          showUrl: 'https://anilist.co/anime/137683',
+          category: 'sub',
+          episodeId: 'S1E79',
+          episodeNumber: 79,
+          episodeUrl: 'https://example.com/episode/79',
+          position: const Duration(minutes: 1),
+          duration: const Duration(minutes: 24),
+          updatedAt: 1,
+        ),
+      ),
+    );
+
+    await tester.pumpWidget(_homeApp(cubit));
+    await tester.pumpAndSettle();
+    final resumeCard = tester
+        .widgetList<TvFocusable>(find.byType(TvFocusable))
+        .firstWhere(
+          (f) => f.semanticLabel?.startsWith('CloudStream Show,') ?? false,
+        );
+    resumeCard.onTap();
+    await tester.pump();
+
+    expect(repo.sourceLoadChecks, ['cs:StreamPlay-Anime']);
+    expect(repo.episodeCalls, 1);
+
+    repo.episodesResult.complete(const []);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.runAsync(() async {
+      await Hive.deleteFromDisk();
+      if (await dir.exists()) await dir.delete(recursive: true);
+    });
+    sl.unregister<WatchHistory>();
+    sl.unregister<SourceRepository>();
+    sl.unregister<ProviderManager>();
+    sl.unregister<ProviderRegistry>();
   });
 
   testWidgets('TV Home does not duplicate metadata repository prefetch', (
