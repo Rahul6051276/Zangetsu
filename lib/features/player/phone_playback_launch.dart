@@ -84,8 +84,8 @@ Map<String, dynamic> phoneSourceMap(VideoSource source, int index) {
 /// call, and [bufferParams] is spread in rather than nested so BufferPresets
 /// can read it without knowing this function exists.
 Map<String, dynamic> phonePlayerArgs({
-  required VideoSource source,
-  required int positionMs,
+  VideoSource? source,
+  int positionMs = 0,
   required String title,
   required String episodeLabel,
   required List<String> episodeLabels,
@@ -105,19 +105,25 @@ Map<String, dynamic> phonePlayerArgs({
   required bool autoplayNext,
   required int seekSeconds,
   String? subtitleFontPath,
+  String? cover,
+  Map<String, String>? coverHeaders,
 }) {
-  final mime = phoneMimeFor(source);
+  final mime = source == null ? null : phoneMimeFor(source);
   return <String, dynamic>{
-    'url': source.url,
-    'headers': source.headers ?? const <String, String>{},
-    'mimeType': ?mime,
-    'positionMs': positionMs,
+    // No url: the Activity opens on its loading screen and asks Dart for the
+    // episode over the channel, so the user never waits on a blank route.
+    if (source != null) ...{
+      'url': source.url,
+      'headers': source.headers ?? const <String, String>{},
+      'mimeType': ?mime,
+      'positionMs': positionMs,
+      ..._phoneSubtitlePayload(source),
+    },
     'title': title,
     'episodeLabel': episodeLabel,
     'episodeLabels': episodeLabels,
     'episodeCount': episodeLabels.length,
     'startIndex': startIndex,
-    ..._phoneSubtitlePayload(source),
     'accentColor': accentColor,
     'softwareDecoding': softwareDecoding,
     'defaultSpeed': defaultSpeed,
@@ -133,6 +139,8 @@ Map<String, dynamic> phonePlayerArgs({
     'subtitleEdgeColor': subtitleEdgeColor,
     'subtitlePreference': subtitlePreference,
     'subtitleFontPath': ?subtitleFontPath,
+    'cover': ?cover,
+    'coverHeaders': coverHeaders ?? const <String, String>{},
   };
 }
 
@@ -168,6 +176,14 @@ Future<void> phoneScrobbleOnLaunch({
     ),
   );
 }
+
+bool phoneShouldScrobbleOnFirstFrame({
+  required bool playerOpen,
+  required bool alreadyScrobbled,
+  required bool peek,
+  required int episodeIndex,
+  required int startIndex,
+}) => playerOpen && !alreadyScrobbled && !peek && episodeIndex == startIndex;
 
 typedef PhoneSourcesPoll =
     Future<({List<VideoSource> sources, bool done})> Function(
@@ -259,9 +275,14 @@ class PhoneNativePlayer {
   static WatchHistory? _history;
   static bool _autoResume = true;
   static bool _peek = false;
+  static VideoSource? _seedSource;
+  static int _startIndex = 0;
+  static int _resumeOverride = 0;
+  static bool _seedUsed = false;
+  static bool _scrobbled = false;
 
-  /// Returns false when the episode could not be resolved or the Activity
-  /// would not start. No UI of its own — the caller surfaces that.
+  /// Returns false when the Activity cannot be started; stream errors are
+  /// shown inside the native player so the user can retry or leave.
   static Future<bool> play({
     required String sourceId,
     required List<Episode> episodes,
@@ -313,23 +334,13 @@ class PhoneNativePlayer {
     final ep = _episodes[startIndex];
     final prefs = sl<PlaybackPrefs>();
     _autoResume = prefs.autoResume;
-    final sources = initialSource == null
-        ? await _resolveSources(ep)
-        : [initialSource];
-    if (sources.isEmpty) return false;
-    final preparedSources = await _prepareSources(sources);
-    if (preparedSources.isEmpty) return false;
-    final src = initialSource == null
-        ? _pickSource(preparedSources)
-        : preparedSources.first;
-    if (src == null) return false;
+    _seedSource = initialSource;
+    _startIndex = startIndex;
+    _resumeOverride = resumePosition;
+    _seedUsed = false;
+    _scrobbled = false;
     final subFontPath = await _stageSubtitleFont(prefs.subtitleFont);
-    final startPosition = _autoResume
-        ? (resumePosition > 0 ? resumePosition : _resumePosition(ep))
-        : 0;
     final args = phonePlayerArgs(
-      source: src,
-      positionMs: startPosition,
       title: _showTitle,
       episodeLabel: _episodeLabel(ep),
       episodeLabels: [for (final e in _episodes) _episodeLabel(e)],
@@ -357,6 +368,8 @@ class PhoneNativePlayer {
       autoplayNext: prefs.autoplayNext,
       seekSeconds: prefs.seekSeconds,
       subtitleFontPath: subFontPath,
+      cover: _cover,
+      coverHeaders: _coverHeaders,
     );
 
     _closed = Completer<Map<String, dynamic>?>();
@@ -365,18 +378,6 @@ class PhoneNativePlayer {
       _closed = null;
       return false;
     }
-    unawaited(
-      phoneScrobbleOnLaunch(
-        episode: ep,
-        episodes: _episodes,
-        malId: _malId,
-        scrobbleTitle: _scrobbleTitle,
-        tmdbId: _tmdbId,
-        tmdbIsTv: _tmdbIsTv,
-        imdbId: _imdbId,
-        peek: _peek,
-      ),
-    );
     await _closed!.future;
     return true;
   }
@@ -388,6 +389,30 @@ class PhoneNativePlayer {
         final index = (args?['index'] as num?)?.toInt() ?? -1;
         if (index < 0 || index >= _episodes.length) return null;
         return _resolveEpisode(index);
+      case 'playbackStarted':
+        final index = (_callArgs(call)?['index'] as num?)?.toInt() ?? -1;
+        if (!phoneShouldScrobbleOnFirstFrame(
+          playerOpen: _closed?.isCompleted == false,
+          alreadyScrobbled: _scrobbled,
+          peek: _peek,
+          episodeIndex: index,
+          startIndex: _startIndex,
+        )) {
+          return null;
+        }
+        _scrobbled = true;
+        unawaited(
+          phoneScrobbleOnLaunch(
+            episode: _episodes[index],
+            episodes: _episodes,
+            malId: _malId,
+            scrobbleTitle: _scrobbleTitle,
+            tmdbId: _tmdbId,
+            tmdbIsTv: _tmdbIsTv,
+            imdbId: _imdbId,
+          ),
+        );
+        return null;
       case 'sourcesFor':
         final args = _callArgs(call);
         final index = (args?['index'] as num?)?.toInt() ?? -1;
@@ -421,13 +446,25 @@ class PhoneNativePlayer {
 
   static Future<Map<String, dynamic>?> _resolveEpisode(int index) async {
     final ep = _episodes[index];
-    final sources = await _resolveSources(ep);
+    final seed = !_seedUsed && _seedSource != null && index == _startIndex
+        ? _seedSource
+        : null;
+    if (seed != null) _seedUsed = true;
+    final sources = seed == null
+        ? await _resolveSources(ep)
+        : <VideoSource>[seed];
     final prepared = await _prepareSources(sources);
-    final src = _pickSource(prepared);
+    if (prepared.isEmpty) return null;
+    final src = seed == null ? _pickSource(prepared) : prepared.first;
     if (src == null) return null;
+    final position = index == _startIndex
+        ? (_autoResume
+              ? (_resumeOverride > 0 ? _resumeOverride : _resumePosition(ep))
+              : 0)
+        : _resumePosition(ep);
     return {
-      ...phoneSourceMap(src, _indexOfSource(prepared, src)),
-      'positionMs': _resumePosition(ep),
+      ...phoneSourceMap(src, seed == null ? _indexOfSource(prepared, src) : 0),
+      'positionMs': position,
       'episodeLabel': _episodeLabel(ep),
     };
   }
@@ -552,7 +589,12 @@ class PhoneNativePlayer {
     final base = n == null ? '' : 'Episode ${n % 1 == 0 ? n.toInt() : n}';
     // Episode.title is non-nullable (episode.dart:31) but can be empty.
     final t = ep.title.trim();
-    if (t.isEmpty) return base;
+    final lower = t.toLowerCase();
+    if (t.isEmpty ||
+        lower == base.toLowerCase() ||
+        lower == _showTitle.trim().toLowerCase()) {
+      return base;
+    }
     return base.isEmpty ? t : '$base · $t';
   }
 }

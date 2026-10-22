@@ -43,11 +43,12 @@ object PhonePlayerBridge {
 
     @Suppress("UNCHECKED_CAST")
     private fun launch(activity: Activity, call: MethodCall, result: MethodChannel.Result) {
-        val url = call.argument<String>("url")
-        if (url.isNullOrEmpty()) { result.success(false); return }
+        // url is optional: without it the Activity opens on its own loading
+        // screen and asks Dart to resolve the first episode.
+        val url = call.argument<String>("url").orEmpty()
         try {
             val i = Intent(activity, PhonePlayerActivity::class.java)
-            i.putExtra(PhonePlayerIntent.EXTRA_URL, url)
+            if (url.isNotEmpty()) i.putExtra(PhonePlayerIntent.EXTRA_URL, url)
             i.putExtra(
                 PhonePlayerIntent.EXTRA_HEADERS,
                 PhonePlayerIntent.headersToArray(
@@ -152,6 +153,14 @@ object PhonePlayerBridge {
             )
             call.argument<String>("subtitleFontPath")
                 ?.let { i.putExtra(PhonePlayerIntent.EXTRA_SUB_FONT, it) }
+            call.argument<String>("cover")
+                ?.let { i.putExtra(PhonePlayerIntent.EXTRA_COVER, it) }
+            i.putExtra(
+                PhonePlayerIntent.EXTRA_COVER_HEADERS,
+                PhonePlayerIntent.headersToArray(
+                    call.argument<Map<String, String>>("coverHeaders"),
+                ),
+            )
             // No FLAG_ACTIVITY_NEW_TASK: we hold the real Activity, so the
             // player opens inside the app's own task rather than showing up
             // as a second card in recents.

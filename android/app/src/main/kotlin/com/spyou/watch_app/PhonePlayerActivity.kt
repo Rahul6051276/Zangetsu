@@ -7,7 +7,6 @@ import android.os.Bundle
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
-import android.widget.ProgressBar
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
@@ -56,7 +55,28 @@ class PhonePlayerActivity : Activity() {
 
     private var player: ExoPlayer? = null
     private lateinit var playerView: PlayerView
-    private lateinit var loading: ProgressBar
+    private lateinit var loading: View
+
+    private lateinit var loadingOverlay: View
+    private lateinit var loadingBackdrop: android.widget.ImageView
+    private lateinit var loadingTitle: android.widget.TextView
+    private lateinit var loadingEpisode: android.widget.TextView
+    private lateinit var loadingStatus: android.widget.TextView
+    private lateinit var loadingSpinner: View
+    private lateinit var loadingActions: View
+    private var backdropRequested = false
+
+    private val resolveTimeout = Runnable {
+        if (switching) {
+            mediaGeneration++
+            failSwitch(getString(R.string.phone_player_error_timeout))
+        }
+    }
+
+    /** A source that buffers forever must not look like a frozen app. */
+    private val startTimeout = Runnable {
+        if (!playbackStarted) failover()
+    }
 
     private lateinit var controls: android.widget.FrameLayout
     private lateinit var quickActions: ViewGroup
@@ -113,12 +133,26 @@ class PhonePlayerActivity : Activity() {
         }
         goImmersive()
 
-        val url = intent.getStringExtra(PhonePlayerIntent.EXTRA_URL)
-        if (url.isNullOrEmpty()) { finish(); return }
+        val url = intent.getStringExtra(PhonePlayerIntent.EXTRA_URL).orEmpty()
 
         setContentView(R.layout.phone_player)
         playerView = findViewById(R.id.player_view)
         loading = findViewById(R.id.loading)
+        loadingOverlay = findViewById(R.id.loading_overlay)
+        loadingBackdrop = findViewById(R.id.loading_backdrop)
+        loadingTitle = findViewById(R.id.loading_title)
+        loadingEpisode = findViewById(R.id.loading_episode)
+        loadingStatus = findViewById(R.id.loading_status)
+        loadingSpinner = findViewById(R.id.loading_spinner)
+        loadingActions = findViewById(R.id.loading_actions)
+        findViewById<View>(R.id.btn_loading_retry).setOnClickListener {
+            switching = false
+            loadEpisode(currentIndex)
+        }
+        findViewById<View>(R.id.btn_loading_back).setOnClickListener { finish() }
+        loadingTitle.text = intent.getStringExtra(PhonePlayerIntent.EXTRA_TITLE) ?: ""
+        loadingEpisode.text = intent.getStringExtra(PhonePlayerIntent.EXTRA_EP_LABEL) ?: ""
+        loadBackdrop()
         controls = findViewById(R.id.controls)
         quickActions = findViewById(R.id.quick_actions)
         btnPlay = findViewById(R.id.btn_play)
@@ -262,13 +296,23 @@ class PhonePlayerActivity : Activity() {
             PlaybackParameters(intent.getFloatExtra(PhonePlayerIntent.EXTRA_SPEED, 1f))
 
         exo.addListener(object : Player.Listener {
+            override fun onRenderedFirstFrame() {
+                playbackStarted = true
+                PhonePlayerBridge.channel?.invokeMethod(
+                    "playbackStarted",
+                    mapOf("index" to currentIndex),
+                )
+                hideLoading()
+            }
+
             override fun onPlaybackStateChanged(state: Int) {
                 updateKeepScreenOn()
-                loading.visibility =
-                    if (state == Player.STATE_BUFFERING) View.VISIBLE else View.GONE
+                setBuffering(
+                    state == Player.STATE_BUFFERING &&
+                        loadingOverlay.visibility != View.VISIBLE,
+                )
                 if (state == Player.STATE_READY) {
                     playbackError = false
-                    playbackStarted = true
                 }
                 if (state == Player.STATE_ENDED &&
                     autoplayNext &&
@@ -285,7 +329,7 @@ class PhonePlayerActivity : Activity() {
 
             override fun onPlayerError(error: PlaybackException) {
                 playbackError = true
-                loading.visibility = View.GONE
+                setBuffering(false)
                 failover()
             }
 
@@ -296,15 +340,93 @@ class PhonePlayerActivity : Activity() {
             }
         })
 
-        loadStream(
-            url = url,
-            headers = PhonePlayerIntent.headersFromArray(
-                intent.getStringArrayExtra(PhonePlayerIntent.EXTRA_HEADERS),
-            ),
-            subs = subtitlesFromIntent(),
-            mime = intent.getStringExtra(PhonePlayerIntent.EXTRA_MIME),
-            positionMs = intent.getLongExtra(PhonePlayerIntent.EXTRA_POSITION, 0L),
+        if (url.isEmpty()) {
+            // No pre-resolved stream: the loading screen is already up and the
+            // first resolve happens over the channel, like an episode switch.
+            loadEpisode(currentIndex)
+        } else {
+            setLoadingStatus(getString(R.string.phone_player_status_starting))
+            loadStream(
+                url = url,
+                headers = PhonePlayerIntent.headersFromArray(
+                    intent.getStringArrayExtra(PhonePlayerIntent.EXTRA_HEADERS),
+                ),
+                subs = subtitlesFromIntent(),
+                mime = intent.getStringExtra(PhonePlayerIntent.EXTRA_MIME),
+                positionMs = intent.getLongExtra(PhonePlayerIntent.EXTRA_POSITION, 0L),
+            )
+        }
+    }
+
+    /** Poster behind the status text, so a slow resolve never looks frozen. */
+    private fun loadBackdrop() {
+        if (backdropRequested) return
+        val url = intent.getStringExtra(PhonePlayerIntent.EXTRA_COVER).orEmpty()
+        if (url.isEmpty()) return
+        backdropRequested = true
+        val headers = PhonePlayerIntent.headersFromArray(
+            intent.getStringArrayExtra(PhonePlayerIntent.EXTRA_COVER_HEADERS),
         )
+        Thread {
+            val bitmap = runCatching {
+                val conn = java.net.URL(url).openConnection() as java.net.HttpURLConnection
+                conn.connectTimeout = 6_000
+                conn.readTimeout = 6_000
+                for ((k, v) in headers) conn.setRequestProperty(k, v)
+                conn.inputStream.use { android.graphics.BitmapFactory.decodeStream(it) }
+            }.getOrNull()
+            if (bitmap != null) {
+                runOnUiThread {
+                    if (!isFinishing && !isDestroyed) loadingBackdrop.setImageBitmap(bitmap)
+                }
+            }
+        }.start()
+    }
+
+    private fun setLoadingStatus(text: String) {
+        loadingStatus.text = text
+    }
+
+    private fun showLoading(episodeLabel: String?) {
+        handler.removeCallbacks(resolveTimeout)
+        // The control chrome duplicates the loading title and reads through the
+        // scrim; it comes back on the first tap after playback starts.
+        handler.removeCallbacks(hideRunnable)
+        controlsHiding = false
+        controls.animate().cancel()
+        controls.visibility = View.GONE
+        loadingOverlay.visibility = View.VISIBLE
+        loadingSpinner.visibility = View.VISIBLE
+        loadingActions.visibility = View.GONE
+        loadingStatus.visibility = View.VISIBLE
+        loadingEpisode.text = episodeLabel ?: episodeText.text
+        setLoadingStatus(getString(R.string.phone_player_status_finding))
+        setBuffering(false)
+    }
+
+    /** The center pause button is the same solid accent circle the indicator
+     *  draws over; hide it while buffering or the morph reads as one blob. */
+    private fun setBuffering(visible: Boolean) {
+        loading.visibility = if (visible) View.VISIBLE else View.GONE
+        btnPlay.visibility = if (visible) View.INVISIBLE else View.VISIBLE
+    }
+
+    private fun hideLoading() {
+        handler.removeCallbacks(resolveTimeout)
+        handler.removeCallbacks(startTimeout)
+        loadingOverlay.visibility = View.GONE
+        setBuffering(false)
+    }
+
+    private fun showLoadError(message: String) {
+        handler.removeCallbacks(resolveTimeout)
+        handler.removeCallbacks(startTimeout)
+        loadingOverlay.visibility = View.VISIBLE
+        loadingSpinner.visibility = View.GONE
+        loadingStatus.visibility = View.VISIBLE
+        setLoadingStatus(message)
+        loadingActions.visibility = View.VISIBLE
+        setBuffering(false)
     }
 
     private fun updateEpisodeNavigation() {
@@ -393,6 +515,8 @@ class PhonePlayerActivity : Activity() {
         if (positionMs > 0) p.seekTo(positionMs)
         p.prepare()
         p.playWhenReady = true
+        handler.removeCallbacks(startTimeout)
+        handler.postDelayed(startTimeout, 30_000L)
     }
 
     private fun showEpisodeMenu() {
@@ -417,8 +541,11 @@ class PhonePlayerActivity : Activity() {
         val p = player
         sendProgress()
         p?.pause() // don't leave the old episode running under the spinner
+        playbackStarted = false
+        handler.removeCallbacks(startTimeout)
         switching = true
-        loading.visibility = View.VISIBLE
+        showLoading(episodeLabels.getOrNull(index))
+        handler.postDelayed(resolveTimeout, 30_000L)
         ch.invokeMethod(
             "resolveEpisode",
             mapOf("index" to index),
@@ -439,12 +566,10 @@ class PhonePlayerActivity : Activity() {
         )
     }
 
-    private fun failSwitch() {
+    private fun failSwitch(message: String? = null) {
         switching = false
-        loading.visibility = View.GONE
-        android.widget.Toast
-            .makeText(this, "Couldn't load that episode", android.widget.Toast.LENGTH_SHORT)
-            .show()
+        handler.removeCallbacks(resolveTimeout)
+        showLoadError(message ?: getString(R.string.phone_player_error_load))
     }
 
     private fun headersFrom(raw: Any?): Map<String, String> {
@@ -461,8 +586,11 @@ class PhonePlayerActivity : Activity() {
         if (generation != mediaGeneration) return
         val url = m["url"] as? String
         if (url.isNullOrEmpty()) { failSwitch(); return }
+        handler.removeCallbacks(resolveTimeout)
         currentIndex = index
         episodeText.text = m["episodeLabel"] as? String ?: episodeLabels.getOrNull(index) ?: ""
+        loadingEpisode.text = episodeText.text
+        setLoadingStatus(getString(R.string.phone_player_status_starting))
         updateEpisodeNavigation()
         loadStream(
             url = url,
@@ -484,14 +612,14 @@ class PhonePlayerActivity : Activity() {
     private fun showSourceMenu() {
         val ch = PhonePlayerBridge.channel ?: return
         handler.removeCallbacks(hideRunnable)
-        loading.visibility = View.VISIBLE
+        setBuffering(true)
         ch.invokeMethod(
             "sourcesFor",
             mapOf("index" to currentIndex),
             object : io.flutter.plugin.common.MethodChannel.Result {
                 override fun success(result: Any?) {
                     if (!uiAlive()) return
-                    loading.visibility = View.GONE
+                    setBuffering(false)
                     mirrors = mapList(result)
                     if (mirrors.isEmpty()) {
                         toast("Couldn't load sources")
@@ -521,14 +649,14 @@ class PhonePlayerActivity : Activity() {
 
                 override fun error(code: String, msg: String?, details: Any?) {
                     if (!uiAlive()) return
-                    loading.visibility = View.GONE
+                    setBuffering(false)
                     toast("Couldn't load sources")
                     bumpControls()
                 }
 
                 override fun notImplemented() {
                     if (!uiAlive()) return
-                    loading.visibility = View.GONE
+                    setBuffering(false)
                     toast("Couldn't load sources")
                     bumpControls()
                 }
@@ -540,7 +668,11 @@ class PhonePlayerActivity : Activity() {
         if (failoverInFlight) return
         val ch = PhonePlayerBridge.channel ?: run { finish(); return }
         failoverInFlight = true
-        loading.visibility = View.VISIBLE
+        if (loadingOverlay.visibility == View.VISIBLE) {
+            setLoadingStatus(getString(R.string.phone_player_status_retrying))
+        } else {
+            setBuffering(true)
+        }
         val requestedIndex = currentIndex
         val requestedUrl = currentUrl
         val generation = mediaGeneration
@@ -565,8 +697,7 @@ class PhonePlayerActivity : Activity() {
                         url != null && url !in attemptedUrls
                     }
                     if (next == null) {
-                        toast("All sources failed")
-                        finish()
+                        failoverFailed()
                     } else {
                         playMirror(next, position, generation)
                     }
@@ -575,20 +706,26 @@ class PhonePlayerActivity : Activity() {
                 override fun error(code: String, msg: String?, details: Any?) {
                     if (!uiAlive()) return
                     if (generation != mediaGeneration) return
-                    failoverInFlight = false
-                    toast("All sources failed")
-                    finish()
+                    failoverFailed()
                 }
 
                 override fun notImplemented() {
                     if (!uiAlive()) return
                     if (generation != mediaGeneration) return
-                    failoverInFlight = false
-                    toast("All sources failed")
-                    finish()
+                    failoverFailed()
                 }
             },
         )
+    }
+
+    private fun failoverFailed() {
+        failoverInFlight = false
+        if (playbackStarted) {
+            toast("All sources failed")
+            finish()
+        } else {
+            failSwitch(getString(R.string.phone_player_error_load))
+        }
     }
 
     private fun mapList(result: Any?): List<Map<String, Any?>> {
@@ -627,6 +764,9 @@ class PhonePlayerActivity : Activity() {
             mime = m["mimeType"] as? String,
             positionMs = keep,
         )
+        if (loadingOverlay.visibility == View.VISIBLE) {
+            setLoadingStatus(getString(R.string.phone_player_status_starting))
+        }
     }
 
     /** Built from the player's own tracks: by now it knows about embedded
@@ -1324,6 +1464,7 @@ class PhonePlayerActivity : Activity() {
 
     @Deprecated("Deprecated in Java")
     override fun onBackPressed() {
+        if (loadingActions.visibility == View.VISIBLE) { finish(); return }
         if (controls.visibility == View.VISIBLE) { hideControls(); return }
         @Suppress("DEPRECATION")
         super.onBackPressed()

@@ -334,6 +334,38 @@ void main() {
     });
   });
 
+  group('phoneShouldScrobbleOnFirstFrame', () {
+    test('only scrobbles the active non-peek start episode once', () {
+      expect(
+        phoneShouldScrobbleOnFirstFrame(
+          playerOpen: true,
+          alreadyScrobbled: false,
+          peek: false,
+          episodeIndex: 2,
+          startIndex: 2,
+        ),
+        isTrue,
+      );
+      for (final values in <({bool open, bool done, bool peek, int index})>[
+        (open: false, done: false, peek: false, index: 2),
+        (open: true, done: true, peek: false, index: 2),
+        (open: true, done: false, peek: true, index: 2),
+        (open: true, done: false, peek: false, index: 3),
+      ]) {
+        expect(
+          phoneShouldScrobbleOnFirstFrame(
+            playerOpen: values.open,
+            alreadyScrobbled: values.done,
+            peek: values.peek,
+            episodeIndex: values.index,
+            startIndex: 2,
+          ),
+          isFalse,
+        );
+      }
+    });
+  });
+
   test('returns normally without a registered TrackerHub', () async {
     const episode = Episode(
       id: 'e1',

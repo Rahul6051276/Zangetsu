@@ -158,6 +158,14 @@ class PhonePlayerLayoutTest {
         for (id in listOf("btn_back", "btn_more", "btn_previous", "btn_play", "btn_next", "seek", "btn_rotate")) {
             assertNotNull("Missing existing control: $id", findByName(context, root, id))
         }
+        assertTrue(
+            "Loading overlay should use the M3 expressive view",
+            findByName(context, root, "loading_spinner") is PhoneLoadingIndicatorView,
+        )
+        assertTrue(
+            "Buffering indicator should use the M3 expressive view",
+            findByName(context, root, "loading") is PhoneLoadingIndicatorView,
+        )
         for (id in quickActions) {
             val action = findByName(context, root, id)
             assertNotNull("Missing quick action: $id", action)

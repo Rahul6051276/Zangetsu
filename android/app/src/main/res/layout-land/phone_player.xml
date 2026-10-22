@@ -14,16 +14,6 @@
         app:resize_mode="fit"
         app:use_controller="false" />
 
-    <ProgressBar
-        android:id="@+id/loading"
-        style="?android:attr/progressBarStyleLarge"
-        android:layout_width="48dp"
-        android:layout_height="48dp"
-        android:layout_gravity="center"
-        android:contentDescription="@string/phone_player_desc_loading"
-        android:indeterminate="true"
-        android:indeterminateTint="@color/phone_player_accent" />
-
     <FrameLayout
         android:id="@+id/controls"
         android:layout_width="match_parent"
@@ -227,4 +217,15 @@
             <include layout="@layout/phone_player_quick_actions" />
         </LinearLayout>
     </FrameLayout>
+    <!-- Buffering indicator: above the controls so it stays visible while the
+         chrome is up. -->
+    <com.spyou.watch_app.PhoneLoadingIndicatorView
+        android:id="@+id/loading"
+        android:layout_width="56dp"
+        android:layout_height="56dp"
+        android:layout_gravity="center"
+        android:contentDescription="@string/phone_player_desc_loading" />
+
+    <include layout="@layout/phone_player_loading_overlay" />
+
 </FrameLayout>

@@ -43,6 +43,8 @@ object PhonePlayerIntent {
     const val EXTRA_BUF_MAX_MS = "maxBufferMs"
     const val EXTRA_BUF_BYTES = "targetBufferBytes"
     const val EXTRA_BUF_BACK_MS = "backBufferMs"
+    const val EXTRA_COVER = "cover"
+    const val EXTRA_COVER_HEADERS = "coverHeaders" // flat String[]: k,v,k,v
 
     // Reported over the channel on close, not via setResult — the phone player
     // is started with startActivity, so there is no onActivityResult to hook.

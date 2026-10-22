@@ -36,4 +36,11 @@
     <string name="phone_player_mode_zoom">Zoom</string>
     <string name="phone_player_quick_quality">Quality</string>
     <string name="phone_player_quick_speed">Speed</string>
+    <string name="phone_player_status_finding">Finding sources&#8230;</string>
+    <string name="phone_player_status_starting">Starting stream&#8230;</string>
+    <string name="phone_player_status_retrying">Trying another source&#8230;</string>
+    <string name="phone_player_error_load">Couldn\'t load this episode</string>
+    <string name="phone_player_error_timeout">This is taking too long</string>
+    <string name="phone_player_action_retry">Retry</string>
+    <string name="phone_player_action_back">Back</string>
 </resources>
