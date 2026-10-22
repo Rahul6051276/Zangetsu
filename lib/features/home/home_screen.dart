@@ -433,9 +433,12 @@ class _HomeViewState extends State<_HomeView>
   }
 
   void _openDetail(MediaItem item) {
+    // Only rebuild Home if this visit actually changed My List — Continue
+    // Watching/Reading rows already listen to their Hive boxes, so a blanket
+    // setState made every back-press rebuild the whole page for nothing.
+    final listRev = _myList.revision.value;
     Navigator.push(context, DetailScreen.route(item)).then((_) {
-      // Refresh Continue Watching + My List row when returning from detail.
-      if (mounted) setState(() {});
+      if (mounted && _myList.revision.value != listRev) setState(() {});
     });
   }
 
