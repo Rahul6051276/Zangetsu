@@ -219,6 +219,8 @@ EXPLICIT: list[tuple[str, str, dict]] = [
     ("installCloudStreamSources", "Install CloudStream sources", {}),
     ("connectionsTvSubtitle", "AniList, MyAnimeList, Simkl", {}),
     ("profile", "Profile", {}),
+    ("changeProfile", "Change profile?", {}),
+    ("chooseWhoIsWatching", "Choose who is watching.", {}),
     # ── shell ─────────────────────────────────────────────────────────────
     ("home", "Home", {}),
     ("myList", "My List", {}),

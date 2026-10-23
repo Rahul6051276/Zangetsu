@@ -807,11 +807,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
     } catch (_) {}
   }
 
-  /// Resolve the start episode + its best source and open it in the user's
-  /// chosen external player, then pop. The branded loader shows briefly while
-  /// resolving. Any failure falls back to the in-app player.
-  /// Play through the native ExoPlayer activity instead of mpv, then leave
-  /// this screen — the same shape as [_launchExternalThenPop].
+  /// Open the native ExoPlayer activity, then leave this screen. Source errors
+  /// stay in that player so the user can retry or go back.
   ///
   /// Uses the very player the TV build ships ([launchTvPlayback] →
   /// TvPlayerActivity): a separate Activity with its own SurfaceView, so there
@@ -824,8 +821,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
   /// whose constructor makes a media_kit `Player`, which is exactly what throws
   /// on a device where libmpv never loaded.
   ///
-  /// Falls back to the in-app player on any failure, so turning this on can
-  /// never leave someone worse off than before.
+  /// A launch failure is reported here; playback failures are handled by the
+  /// native player's retry screen.
   Future<void> _launchExoThenPop() async {
     try {
       var eps = widget.episodes;

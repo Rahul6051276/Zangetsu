@@ -233,6 +233,8 @@
 	"installCloudStreamSources": "Pasang sumber CloudStream",
 	"connectionsTvSubtitle": "AniList, MyAnimeList, Simkl",
 	"profile": "Profil",
+	"changeProfile": "Ganti profil?",
+	"chooseWhoIsWatching": "Pilih siapa yang menonton.",
 	"home": "Beranda",
 	"myList": "My List",
 	"schedule": "Jadwal",

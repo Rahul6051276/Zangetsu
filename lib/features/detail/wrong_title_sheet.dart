@@ -6,11 +6,7 @@ import '../../core/app_mode.dart';
 import '../../core/di/injector.dart';
 import '../../core/tv/tv_focusable.dart';
 import '../../core/ui/app_toast.dart';
-import '../../core/mihon/mihon_extension_service.dart';
 import '../../core/models/media_item.dart';
-import '../../core/provider/cf_solve_needed.dart';
-import '../../core/provider/provider_manager.dart';
-import '../../core/repository/source_actions.dart' as source_actions;
 import '../../core/repository/source_repository.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/ui/poster_card.dart';
@@ -25,6 +21,7 @@ import '../../core/zmode/zmode_ids.dart';
 import '../../core/zmode/zmode_module.dart';
 import '../../l10n/l10n.dart';
 import '../sources/zangetsu_sources_screen.dart';
+import '../sources/source_picker_row_actions.dart';
 import 'cubit/detail_cubit.dart';
 import 'cubit/source_select_cubit.dart';
 import 'cubit/wrong_title_cubit.dart';
@@ -100,7 +97,14 @@ class _MatchLineState extends State<MatchLine> {
       ),
     ).showPicker(
       context,
-      trailingBuilder: (id) => _rowActions(context, id),
+      trailingBuilder: (id) => SourcePickerRowActions(
+        sourceId: id,
+        onCloudflareSolved: (_) async {
+          if (!mounted) return;
+          await _cubit.load();
+          if (mounted) _refreshAfterMatchChange();
+        },
+      ),
       // Auto Resolve sits above the sources rather than among them, because
       // it is not one: it is the absence of a pinned choice, which lets the
       // resolver sweep every source at play time. Picking a source here pins
@@ -118,152 +122,14 @@ class _MatchLineState extends State<MatchLine> {
     );
   }
 
-  // Cloudflare's own brand orange — reused from the Detail-path blocked
-  // state (_DetailCloudflareBlocked in detail_screen.dart) so a flagged row
-  // reads as the same kind of "attention needed" everywhere it appears.
-  static const Color _cfOrange = Color(0xFFF48120);
-
-  /// Per-source controls on a picker row, behind a single overflow: solve
-  /// Cloudflare, sign in to the source's site, and open that source's own
-  /// settings. Each entry is offered only when it will actually do something,
-  /// and none of them changes the selection — tapping the row body does.
-  ///
-  /// One button rather than three icons: these are rare, per-source actions
-  /// (you sign in to a source about twice, ever) and the row has a name to
-  /// show. Same shape the browse screen's toolbar already uses.
-  ///
-  /// The solve action is offered wherever there is a site to solve AGAINST,
-  /// not only where a challenge has already been seen. [CfSolveNeeded] is the
-  /// record of one, but it lives in memory and is only written while a search
-  /// sweep runs — so gating visibility on it hid the action on a fresh launch
-  /// for sources that plainly need it (AnimePahe). The flag instead decides
-  /// WHERE the action sits: a flagged source keeps its shield on the row, one
-  /// tap from a solve, while an unflagged one folds it into the overflow with
-  /// everything else. Solving is the one action here you may do repeatedly,
-  /// and only a flagged source is about to need it.
-  Widget _rowActions(BuildContext sheetContext, String id) {
-    final flaggedUrl = CfSolveNeeded.urlFor(id);
-    // Empty for a plain JS provider with no declared site — which doubles as
-    // the honest signal that there is nothing to solve, so it gets no entry.
-    final solveTarget = flaggedUrl ?? sl<SourceRepository>().baseUrlFor(id);
-    final showSolve = solveTarget.isNotEmpty;
-    final showSignIn = source_actions.webViewUrlFor(id) != null;
-    // A flagged source shows its shield on the row instead, so the menu
-    // must not offer the same solve a second time.
-    final flagged = flaggedUrl != null;
-    // The native solver owns the Mihon/Aniyomi/CloudStream cookie jars; plain
-    // JS providers run on Dio and need ProviderManager's own solve. Same
-    // id-prefix routing source_actions.hasSourceSettings uses.
-    final isJs =
-        !id.startsWith('ani:') &&
-        !id.startsWith('mihon:') &&
-        !id.startsWith('cs:') &&
-        !id.startsWith('lnr:');
-    return FutureBuilder<bool>(
-      future: source_actions.hasSourceSettings(id),
-      builder: (context, snapshot) {
-        final showSettings = snapshot.data == true;
-        // Solving is in the menu only when the shield isn't already on the row.
-        final menuSolve = showSolve && !flagged;
-        final hasMenu = menuSolve || showSignIn || showSettings;
-        // Nothing to offer — no empty menu to tap into.
-        if (!flagged && !hasMenu) return const SizedBox.shrink();
-        return Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            if (flagged)
-              IconButton(
-                visualDensity: VisualDensity.compact,
-                tooltip: sheetContext.l10n.solveCloudflare,
-                icon: const Badge(
-                  backgroundColor: _cfOrange,
-                  smallSize: 8,
-                  child: Icon(Icons.shield_rounded, size: 18),
-                ),
-                color: _cfOrange,
-                onPressed: () => _solveCloudflare(id, solveTarget, isJs: isJs),
-              ),
-            if (hasMenu)
-              _overflow(
-                sheetContext,
-                id,
-                solveTarget,
-                isJs: isJs,
-                showSolve: menuSolve,
-                showSignIn: showSignIn,
-                showSettings: showSettings,
-              ),
-          ],
-        );
-      },
-    );
-  }
-
-  /// The rare per-source actions, behind one button.
-  Widget _overflow(
-    BuildContext sheetContext,
-    String id,
-    String solveTarget, {
-    required bool isJs,
-    required bool showSolve,
-    required bool showSignIn,
-    required bool showSettings,
-  }) {
-    return PopupMenuButton<VoidCallback>(
-      tooltip: sheetContext.l10n.more,
-      padding: EdgeInsets.zero,
-      icon: const Icon(Icons.more_vert_rounded, size: 18),
-      iconColor: AppColors.textSecondary,
-      onSelected: (run) => run(),
-      itemBuilder: (_) => [
-        if (showSolve)
-          PopupMenuItem<VoidCallback>(
-            value: () => _solveCloudflare(id, solveTarget, isJs: isJs),
-            child: Text(sheetContext.l10n.solveCloudflare),
-          ),
-        if (showSignIn)
-          PopupMenuItem<VoidCallback>(
-            value: () => source_actions.openSourceWebView(id),
-            child: Text(sheetContext.l10n.signInToSource),
-          ),
-        if (showSettings)
-          PopupMenuItem<VoidCallback>(
-            value: () => source_actions.openSourceSettings(
-              sheetContext,
-              id,
-              sl<SourceRepository>().displayName(id),
-            ),
-            child: Text(sheetContext.l10n.sourceSettings),
-          ),
-      ],
-    );
-  }
-
-  /// Runs a Cloudflare solve for [id] and reloads the match, so the user sees
-  /// the result instead of having to retry by hand.
-  Future<void> _solveCloudflare(
-    String id,
-    String fallbackTarget, {
-    required bool isJs,
-  }) async {
-    // Resolve the target at TAP time, not render time: a CloudStream plugin
-    // rewrites its own mainUrl once it has fetched its live domain list, and
-    // a user-set domain override outranks both.
-    final target =
-        await sl<SourceRepository>().cfSolveTargetFor(id) ?? fallbackTarget;
-    if (target.isEmpty) return;
-    if (isJs) {
-      await sl<ProviderManager>().solveCloudflareForHost(
-        Uri.parse(target).host,
-        target,
-      );
-    } else {
-      await MihonExtensionService.solveCloudflare(target);
-    }
-    if (!mounted) return;
-    await _cubit.load();
-    if (mounted) _refreshAfterMatchChange();
-  }
+  Widget _rowActions(BuildContext _, String id) => SourcePickerRowActions(
+    sourceId: id,
+    onCloudflareSolved: (_) async {
+      if (!mounted) return;
+      await _cubit.load();
+      if (mounted) _refreshAfterMatchChange();
+    },
+  );
 
   Future<void> _fix(String sourceId) async {
     final before = sl<SourceMatcher>().sourceForTitle(widget.canonical);

@@ -8,6 +8,7 @@ import '../../core/di/injector.dart';
 import '../../core/download/download_manager.dart';
 import '../../core/download/download_prefs.dart';
 import '../../core/download/download_record.dart';
+import '../../core/playback/resume_store.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_text.dart';
 import '../../core/tv/tv_focusable.dart';
@@ -24,15 +25,19 @@ import 'downloads_screen.dart';
 /// via the shared [launchDownloadedEpisode] path.
 ///
 /// The phone [DownloadsScreen] is byte-identical except for the single
-/// `if (sl<AppMode>().isTv) return const DownloadsScreenTv();` branch at the
+/// `if (sl<AppMode>().isTv)` branch at the
 /// top of [DownloadsScreen.build].
 class DownloadsScreenTv extends StatelessWidget {
-  const DownloadsScreenTv({super.key, this.manager});
+  const DownloadsScreenTv({super.key, this.manager, this.resume});
 
   /// Optional [DownloadManager] override — injected in tests to avoid sl/Hive
   /// setup. In production this is always null and [sl<DownloadManager>()] is
   /// used, matching the phone screen's own DI pattern.
   final DownloadManager? manager;
+
+  /// Per-episode watched positions shown on finished tiles. Optional for the
+  /// same reason as [manager]: tests build this screen without GetIt.
+  final ResumeStore? resume;
 
   @override
   Widget build(BuildContext context) {
@@ -82,6 +87,7 @@ class DownloadsScreenTv extends StatelessWidget {
                       return _TvShowGroup(
                         records: recs,
                         manager: mgr,
+                        resume: resume,
                         // Only the first group's first tile receives autofocus
                         // so the D-pad starts on a real item, not the rail.
                         autofocusFirst: i == 0,
@@ -108,10 +114,12 @@ class _TvShowGroup extends StatelessWidget {
     required this.records,
     required this.manager,
     required this.autofocusFirst,
+    this.resume,
   });
 
   final List<DownloadRecord> records;
   final DownloadManager manager;
+  final ResumeStore? resume;
 
   /// When true the first episode tile in this group gets [TvFocusable.autofocus].
   final bool autofocusFirst;
@@ -199,7 +207,11 @@ class _TvShowGroup extends StatelessWidget {
             // Reuse the phone's tile widget unchanged — only the interaction
             // model changes (D-pad vs touch). The tile's own ListTile.onTap
             // still works for pointer/touch input on hybrid remotes.
-            child: DownloadTile(record: records[j], manager: manager),
+            child: DownloadTile(
+              record: records[j],
+              manager: manager,
+              resume: resume,
+            ),
           ),
         const SizedBox(height: 6),
       ],

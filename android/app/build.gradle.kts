@@ -225,6 +225,11 @@ dependencies {
     implementation("androidx.webkit:webkit:1.11.0")
     implementation("com.google.android.material:material:1.12.0")
     // SAF DocumentFile — used to check if a content:// download still exists.
+    // RoundedPolygon/Morph from Material 3 Expressive shapes, used by the native
+    // phone player's loading indicator. Tiny (no Compose runtime) and already in
+    // the dependency graph; declared explicitly so the compile classpath can't
+    // lose it when an unrelated transitive dep changes.
+    implementation("androidx.graphics:graphics-shapes:1.0.1")
     implementation("androidx.documentfile:documentfile:1.0.1")
     // RecyclerView 1.3.2 (transitive default is 1.1.0, which lacks
     // ViewHolder.getBindingAdapterPosition() — added in 1.2.0). Newer CS plugin

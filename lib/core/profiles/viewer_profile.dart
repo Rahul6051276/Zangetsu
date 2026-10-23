@@ -7,6 +7,7 @@ import 'package:supabase_flutter/supabase_flutter.dart' show PostgrestClient;
 import '../hive/safe_box.dart';
 import '../supabase/cloud_postgrest.dart';
 import '../supabase/supabase_service.dart';
+import '../theme/theme_controller.dart';
 import 'profile_scope.dart';
 
 export 'profile_scope.dart' show kDefaultProfileId;
@@ -15,47 +16,78 @@ class ViewerProfile {
   const ViewerProfile({
     required this.id,
     required this.name,
+    this.bio = '',
     this.avatar = 0,
     this.isKids = false,
     this.photoUrl,
+    this.coverUrl,
+    this.accentColor,
+    this.materialYou,
+    this.amoled,
   });
 
   final String id;
   final String name;
+  final String bio;
   final int avatar;
   final bool isKids;
   final String? photoUrl;
+  final String? coverUrl;
+  final int? accentColor;
+  final bool? materialYou;
+  final bool? amoled;
 
   bool get isDefault => id == kDefaultProfileId;
 
   Map<String, dynamic> toJson() => {
     'id': id,
     'name': name,
+    'bio': bio,
     'avatar': avatar,
     'isKids': isKids,
     'photoUrl': photoUrl,
+    'coverUrl': coverUrl,
+    'accentColor': accentColor,
+    'materialYou': materialYou,
+    'amoled': amoled,
   };
 
   factory ViewerProfile.fromJson(Map<String, dynamic> json) => ViewerProfile(
     id: json['id'] as String,
     name: json['name'] as String,
+    bio: json['bio'] as String? ?? '',
     avatar: (json['avatar'] as num?)?.toInt() ?? 0,
     isKids: json['isKids'] == true,
     photoUrl: json['photoUrl'] as String?,
+    coverUrl: json['coverUrl'] as String?,
+    accentColor: (json['accentColor'] as num?)?.toInt(),
+    materialYou: json['materialYou'] as bool?,
+    amoled: json['amoled'] as bool?,
   );
 
   ViewerProfile copyWith({
     String? name,
+    String? bio,
     int? avatar,
     bool? isKids,
     String? photoUrl,
+    String? coverUrl,
+    int? accentColor,
+    bool? materialYou,
+    bool? amoled,
     bool clearPhotoUrl = false,
+    bool clearCoverUrl = false,
   }) => ViewerProfile(
     id: id,
     name: name ?? this.name,
+    bio: bio ?? this.bio,
     avatar: avatar ?? this.avatar,
     isKids: isKids ?? this.isKids,
     photoUrl: clearPhotoUrl ? null : photoUrl ?? this.photoUrl,
+    coverUrl: clearCoverUrl ? null : coverUrl ?? this.coverUrl,
+    accentColor: accentColor ?? this.accentColor,
+    materialYou: materialYou ?? this.materialYou,
+    amoled: amoled ?? this.amoled,
   );
 }
 
@@ -86,9 +118,15 @@ class ViewerProfileRemote {
       'user_key': userId,
       'profile_id': profile.id,
       'name': profile.name,
+      'bio': profile.bio,
       'avatar': profile.avatar,
       'is_kids': profile.isKids,
       'photo_url': profile.photoUrl,
+      // NULL means an older client omitted this field; '' means remove it.
+      'cover_url': profile.coverUrl ?? '',
+      'accent_color': profile.accentColor,
+      'material_you': profile.materialYou,
+      'amoled': profile.amoled,
     });
   }
 
@@ -115,6 +153,7 @@ class ViewerProfileStore {
 
   static const int maxProfiles = 4;
   static const int maxNameLength = 24;
+  static const int maxBioLength = 160;
   static const String boxName = 'viewer_profiles';
   static const String askOnLaunchKey = 'ask_on_launch';
 
@@ -290,23 +329,32 @@ class ViewerProfileStore {
         next.where((p) => p.id == storedId).firstOrNull ??
         next.firstWhere((p) => p.id == kDefaultProfileId);
     active.value = chosen;
+    await _applyTheme(chosen);
     revision.value++;
   }
 
   Future<ViewerProfile?> create(
     String name, {
+    String bio = '',
     int avatar = 0,
     bool isKids = false,
     String? photoUrl,
+    String? coverUrl,
   }) async {
     final normalized = name.trim();
-    if (!_validName(normalized) || _profiles.length >= maxProfiles) return null;
+    if (!_validName(normalized) ||
+        bio.trim().runes.length > maxBioLength ||
+        _profiles.length >= maxProfiles) {
+      return null;
+    }
     final profile = ViewerProfile(
       id: _uuidV4(),
       name: normalized,
+      bio: bio.trim(),
       avatar: avatar.clamp(0, 11).toInt(),
       isKids: isKids,
       photoUrl: photoUrl,
+      coverUrl: coverUrl,
     );
     _profiles = [..._profiles, profile];
     await _saveLocal(_loadedOwner ?? _owner);
@@ -366,18 +414,26 @@ class ViewerProfileStore {
 
   Future<bool> update(
     String profileId, {
+    String? bio,
     int? avatar,
     bool? isKids,
     String? photoUrl,
     bool clearPhotoUrl = false,
+    String? coverUrl,
+    bool clearCoverUrl = false,
   }) async {
     final index = _profiles.indexWhere((p) => p.id == profileId);
-    if (index < 0) return false;
+    if (index < 0 || (bio != null && bio.trim().runes.length > maxBioLength)) {
+      return false;
+    }
     final profile = _profiles[index].copyWith(
+      bio: bio?.trim(),
       avatar: avatar?.clamp(0, 11).toInt(),
       isKids: isKids,
       photoUrl: photoUrl,
       clearPhotoUrl: clearPhotoUrl,
+      coverUrl: coverUrl,
+      clearCoverUrl: clearCoverUrl,
     );
     final activePolicyChanged =
         activeId == profileId && _profiles[index].isKids != profile.isKids;
@@ -392,9 +448,36 @@ class ViewerProfileStore {
     return synced;
   }
 
+  Future<bool> updateTheme(
+    String profileId, {
+    int? accentColor,
+    bool? materialYou,
+    bool? amoled,
+  }) async {
+    final index = _profiles.indexWhere((profile) => profile.id == profileId);
+    if (index < 0) return false;
+    final profile = _profiles[index].copyWith(
+      accentColor: accentColor,
+      materialYou: materialYou,
+      amoled: amoled,
+    );
+    _profiles = [
+      for (var i = 0; i < _profiles.length; i++)
+        if (i == index) profile else _profiles[i],
+    ];
+    await _saveLocal(_loadedOwner ?? _owner);
+    if (activeId == profileId) {
+      active.value = profile;
+      await _applyTheme(profile);
+    }
+    revision.value++;
+    return _saveRemote(profile);
+  }
+
   Future<void> switchTo(String profileId) async {
     final profile = _profiles.where((p) => p.id == profileId).firstOrNull;
     if (profile == null || profile.id == activeId) return;
+    await _applyTheme(profile);
     active.value = profile;
     await _box.put(_activeKey(_loadedOwner ?? _owner), profile.id);
     revision.value++;
@@ -409,6 +492,7 @@ class ViewerProfileStore {
     }
     final profile = _profiles.firstWhere((profile) => profile.id == profileId);
     final photoUrl = profile.photoUrl;
+    final coverUrl = profile.coverUrl;
     final photoIsShared =
         photoUrl != null &&
         _profiles.any(
@@ -431,6 +515,15 @@ class ViewerProfileStore {
     if (photoUrl != null && !photoIsShared) {
       try {
         await _deleteAvatar?.call(photoUrl);
+      } catch (_) {}
+    }
+    if (coverUrl != null &&
+        coverUrl != photoUrl &&
+        !_profiles.any(
+          (other) => other.photoUrl == coverUrl || other.coverUrl == coverUrl,
+        )) {
+      try {
+        await _deleteAvatar?.call(coverUrl);
       } catch (_) {}
     }
     return true;
@@ -474,10 +567,24 @@ class ViewerProfileStore {
   ViewerProfile _fromRemote(Map<String, dynamic> row) => ViewerProfile(
     id: row['profile_id'] as String,
     name: row['name'] as String,
+    bio: row['bio'] as String? ?? '',
     avatar: (row['avatar'] as num?)?.toInt() ?? 0,
     isKids: row['is_kids'] == true,
     photoUrl: row['photo_url'] as String?,
+    coverUrl: (row['cover_url'] as String?)?.isNotEmpty == true
+        ? row['cover_url'] as String
+        : null,
+    accentColor: (row['accent_color'] as num?)?.toInt(),
+    materialYou: row['material_you'] as bool?,
+    amoled: row['amoled'] as bool?,
   );
+
+  Future<void> _applyTheme(ViewerProfile profile) =>
+      ThemeController.applyProfileTheme(
+        accentColor: profile.accentColor,
+        materialYou: profile.materialYou,
+        amoled: profile.amoled,
+      );
 
   List<ViewerProfile> _readLocal(String owner) =>
       _readProfiles(_profilesKey(owner));

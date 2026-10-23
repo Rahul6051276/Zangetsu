@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import '../cache/app_image_cache.dart';
 import '../theme/app_colors.dart';
 import '../ui/image_fade.dart';
+import 'klipy_gif_service.dart';
+import 'profile_avatar_reference.dart';
 import 'viewer_profile.dart';
 
 const viewerProfileAvatarIcons = <IconData>[
@@ -61,6 +63,7 @@ class ProfileAvatarFace extends StatelessWidget {
     required this.iconSize,
     required this.photoDiameter,
     this.photoBorderRadius,
+    this.klipyGifService,
   });
 
   final ViewerProfile profile;
@@ -68,6 +71,7 @@ class ProfileAvatarFace extends StatelessWidget {
   final double iconSize;
   final double photoDiameter;
   final BorderRadius? photoBorderRadius;
+  final KlipyGifService? klipyGifService;
 
   @override
   Widget build(BuildContext context) {
@@ -78,13 +82,28 @@ class ProfileAvatarFace extends StatelessWidget {
     );
     final url = photoUrl;
     if (url == null || url.isEmpty) return icon;
-    final baseImageProvider = AppImageCache.imageProvider(url);
+    if (isKlipyAvatarReference(url)) {
+      final slug = klipyAvatarSlug(url);
+      if (slug == null) return icon;
+      return FutureBuilder<String?>(
+        future: (klipyGifService ?? KlipyGifService.shared).avatarUrlForSlug(
+          slug,
+        ),
+        builder: (context, snapshot) => snapshot.data == null
+            ? icon
+            : _photo(context, icon, snapshot.data!),
+      );
+    }
+    return _photo(context, icon, url);
+  }
+
+  Widget _photo(BuildContext context, Widget icon, String url) {
     final decodeSize =
         (photoDiameter * (MediaQuery.maybeOf(context)?.devicePixelRatio ?? 1))
             .round();
     final image = Image(
       image: ResizeImage(
-        baseImageProvider,
+        AppImageCache.imageProvider(url),
         width: decodeSize,
         height: decodeSize,
         policy: ResizeImagePolicy.fit,

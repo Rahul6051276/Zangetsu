@@ -63,6 +63,11 @@ Mozilla CA certificate bundle
   The dated, unmodified PEM is bundled at
   android/app/src/main/res/raw/trusted_roots.pem for Android/Dart HTTPS trust.
 
+Runtime-loaded profile teaser GIF (not bundled)
+  Source: https://custom-doodle.com/wp-content/uploads/doodle/auto-draft/one-piece-dancing-roronoa-zoro-doodle.gif
+  Loaded from Custom Doodle when the profile screen is shown and cached on the
+  device. The GIF is not included in the repository or app package.
+
 ────────────────────────────────────────────────────────────────────────────
 Keeping this file current
 ────────────────────────────────────────────────────────────────────────────
@@ -81,3 +86,9 @@ If you believe this project incorporates third-party code, assets, or content
 without proper attribution or in violation of its license, please open an
 issue or contact Spyou directly (https://github.com/Spyou) so it can be
 corrected or removed.
+
+Lucide dock icons
+  https://lucide.dev
+  Six dock icons are rendered from Lucide SVGs with a 1.8 stroke.
+  Licenses: ISC (Lucide) and MIT (Feather-derived icons).
+  Full notices: assets/icons/lucide/LICENSE

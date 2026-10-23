@@ -12,6 +12,7 @@ import 'dart:io';
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hive/hive.dart';
 import 'package:watch_app/core/app_mode.dart';
@@ -46,6 +47,7 @@ import 'package:watch_app/core/trailer/trailer_service.dart';
 import 'package:watch_app/features/detail/detail_screen.dart';
 import 'package:watch_app/features/player/player_screen.dart';
 import 'package:watch_app/features/reader/novel_reader_screen.dart';
+import 'package:watch_app/features/auth/auth_cubit.dart';
 
 // ── Minimal stubs — no Hive, no platform channels, no network ───────────────
 
@@ -460,6 +462,13 @@ class _RecordingNavigatorObserver extends NavigatorObserver {
   }
 }
 
+class _FakeAuthCubit extends Cubit<AuthState> implements AuthCubit {
+  _FakeAuthCubit() : super(const AuthState());
+
+  @override
+  noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
 // ── Tests ────────────────────────────────────────────────────────────────────
 
 void main() {
@@ -478,6 +487,7 @@ void main() {
 
     await sl.reset();
     sl.registerSingleton<AppMode>(const AppMode(isTv: false));
+    sl.registerSingleton<AuthCubit>(_FakeAuthCubit());
     sl.registerSingleton<MyListStore>(_FakeMyListStore());
     sl.registerSingleton<ListStatusStore>(_FakeListStatusStore());
     sl.registerSingleton<ResumeStore>(_FakeResumeStore());

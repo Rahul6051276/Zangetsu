@@ -4,11 +4,14 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../core/di/injector.dart';
 import '../../core/mode/content_mode.dart';
+import '../../core/mode/content_mode_cubit.dart';
 import '../../core/models/media_item.dart';
 import '../../core/playback/playback_prefs.dart';
 import '../../core/profiles/viewer_profile.dart';
 import '../../core/playback/search_history.dart';
 import '../../core/playback/search_scope.dart';
+import '../../core/playback/search_prefs.dart';
+import '../../core/repository/source_repository.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_text.dart';
 import '../../l10n/l10n.dart';
@@ -22,9 +25,13 @@ import '../../core/ui/dock_visibility.dart';
 import '../../core/ui/states.dart';
 import '../../core/zmode/metadata_filters.dart';
 import '../../core/zmode/metadata_repository.dart';
+import '../../core/zmode/genre_catalog.dart';
+import '../../core/zmode/zmode_ids.dart';
+import '../../core/zmode/zmode_module.dart';
 import '../../core/zmode/zmode_prefs.dart';
 import '../detail/detail_screen.dart';
 import 'genres_screen_tv.dart';
+import 'tv_search_input_screen.dart';
 import '../search/bloc/search_bloc.dart';
 import '../search/bloc/search_event.dart';
 import '../search/bloc/search_state.dart';
@@ -34,10 +41,9 @@ import '../search/search_meta_filter_helpers.dart';
 /// TV Search: D-pad-navigable layout backed by the same [SearchBloc] provided
 /// by the parent [SearchScreen].
 ///
-/// The query box is a [TvTextField]: D-pad lands on navigation focus without
-/// raising the leanback IME. OK moves focus into the editable field so the
-/// keyboard opens on the same text box. Arrows leave for Filters / genres /
-/// results.
+/// Classic keeps the original field and system keyboard. New renders the
+/// compact keyboard, controls and results directly in this destination, so
+/// Back returns to Home without an intermediate Classic screen.
 ///
 /// Results render as a 6-column focusable poster grid using [TvPosterTile].
 /// OK on a card opens Detail via the same [DetailScreen.route] the phone uses.
@@ -76,6 +82,10 @@ class _SearchScreenTvState extends State<SearchScreenTv> {
   /// 6 columns fills a 1920-wide TV at ~140 dp card width with comfortable gaps.
 
   bool get _isLibrary => widget.scope == SearchScope.library;
+  bool get _newSearch =>
+      sl.isRegistered<SearchPrefs>() &&
+      sl<SearchPrefs>().tvSearchStyle == 'new';
+  SearchPrefs? _stylePrefs;
 
   MetaFilters _metaFilters = const MetaFilters();
 
@@ -100,8 +110,19 @@ class _SearchScreenTvState extends State<SearchScreenTv> {
     super.initState();
     _controller = TextEditingController(text: widget.initialQuery ?? '');
     _controller.addListener(_onFieldText);
+    if (sl.isRegistered<SearchPrefs>()) {
+      _stylePrefs = sl<SearchPrefs>();
+      _stylePrefs!.addListener(_onStyleChanged);
+    }
     ZModePrefs.revision.addListener(_onStreamKind);
     _checkVoice();
+  }
+
+  /// Rebuilds immediately when the saved Classic/New preference changes.
+  void _onStyleChanged() {
+    if (!mounted) return;
+    _syncShellBackIntercept(context.read<SearchBloc>().state);
+    setState(() {});
   }
 
   @override
@@ -153,6 +174,25 @@ class _SearchScreenTvState extends State<SearchScreenTv> {
     }
   }
 
+  /// Searches the current catalogue with the same source and genre restrictions.
+  Future<List<MediaItem>> _loadTypingRecommendations(String query) async {
+    if (_isLibrary && sl.isRegistered<MetadataRepository>()) {
+      return sl<MetadataRepository>().tvSearchWithSourceRecovery(
+        query,
+        filters: _metaFilters,
+      );
+    }
+    if (sl.isRegistered<SourceRepository>()) {
+      final result = await sl<SourceRepository>().searchStatus(
+        query,
+        sourceId: widget.fixedSourceId,
+        cache: true,
+      );
+      return result.items;
+    }
+    return const [];
+  }
+
   void _onFieldText() {
     if (!mounted) return;
     _syncShellBackIntercept(context.read<SearchBloc>().state);
@@ -167,7 +207,7 @@ class _SearchScreenTvState extends State<SearchScreenTv> {
       s.suggestions.isNotEmpty;
 
   void _syncShellBackIntercept(SearchState state) {
-    final want = _isActiveShellTab && _isActiveSearch(state);
+    final want = !_newSearch && _isActiveShellTab && _isActiveSearch(state);
     if (want) {
       shellBackIntercepted.value = true;
       _ownsIntercept = true;
@@ -185,6 +225,7 @@ class _SearchScreenTvState extends State<SearchScreenTv> {
 
   @override
   void dispose() {
+    _stylePrefs?.removeListener(_onStyleChanged);
     ZModePrefs.revision.removeListener(_onStreamKind);
     _controller.removeListener(_onFieldText);
     if (_ownsIntercept) {
@@ -207,6 +248,20 @@ class _SearchScreenTvState extends State<SearchScreenTv> {
     Navigator.push(context, DetailScreen.route(item));
   }
 
+  /// Records submitted drafts without navigating away from inline search.
+  Future<void> _recordNewSearch(String query) async {
+    if (!_isLibrary && query.trim().isNotEmpty) {
+      context.read<SearchBloc>().add(SearchRunRequested(query));
+    }
+    await widget.history?.add(query);
+    if (mounted) setState(() {});
+  }
+
+  void _openNewSearchDetail(MediaItem item) {
+    if (!_isLibrary) widget.history?.add(_controller.text);
+    _openDetail(item);
+  }
+
   Future<void> _openMetaFilters() async {
     final picked = await pickMetaFilters(
       context,
@@ -215,7 +270,201 @@ class _SearchScreenTvState extends State<SearchScreenTv> {
     );
     if (picked == null || !mounted) return;
     setState(() => _metaFilters = picked);
-    applyMetaFilters(context, _metaFilters);
+    if (!_newSearch) applyMetaFilters(context, _metaFilters);
+  }
+
+  /// Applies a genre directly to New search without opening the Classic page.
+  Future<void> _openNewGenres() async {
+    if (!sl.isRegistered<MetadataRepository>() ||
+        !sl<MetadataRepository>().supportsFilters) {
+      await _openMetaFilters();
+      return;
+    }
+    final kind = sl.isRegistered<ContentModeCubit>()
+        ? browseKindFor(sl<ContentModeCubit>().state, ZModePrefs.streamKind)
+        : ZKind.anime;
+    final genres = GenreCatalog.genresFor(kind);
+    final picked = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => SimpleDialog(
+        title: Text(context.l10n.genres),
+        children: [
+          SizedBox(
+            width: 360,
+            height: 300,
+            child: ListView(
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              children: [
+                for (final genre in ['', ...genres])
+                  TvFocusable(
+                    waitForKeyUp: true,
+                    autofocus: genre.isEmpty,
+                    onTap: () => Navigator.pop(dialogContext, genre),
+                    child: Padding(
+                      padding: const EdgeInsets.all(10),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              genre.isEmpty ? context.l10n.clear : genre,
+                            ),
+                          ),
+                          if (_metaFilters.genres.contains(genre))
+                            const Icon(Icons.check, size: 18),
+                        ],
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+    if (picked == null || !mounted) return;
+    setState(
+      () => _metaFilters = _metaFilters.copyWith(
+        genres: picked.isEmpty ? [] : [picked],
+      ),
+    );
+  }
+
+  /// Places source, genre, and filter actions beneath the compact keyboard.
+  Widget _newSearchControls() {
+    Widget chip(
+      String id,
+      IconData icon,
+      String label,
+      VoidCallback action, {
+      bool selected = false,
+    }) => TvFocusable(
+      key: ValueKey(id),
+      waitForKeyUp: true,
+      requireKeyDown: true,
+      scale: 1,
+      variant: TvFocusVariant.none,
+      borderRadius: 8,
+      onTap: action,
+      builder: (focused) => AnimatedContainer(
+        duration: Duration(
+          milliseconds: MediaQuery.disableAnimationsOf(context) ? 0 : 110,
+        ),
+        curve: Curves.easeOutCubic,
+        height: 24,
+        alignment: Alignment.center,
+        padding: const EdgeInsets.symmetric(horizontal: 6),
+        decoration: BoxDecoration(
+          color: focused || selected ? Colors.white : AppColors.surface2,
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: FittedBox(
+          fit: BoxFit.scaleDown,
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                icon,
+                size: 16,
+                color: focused || selected
+                    ? Colors.black
+                    : AppColors.textSecondary,
+              ),
+              const SizedBox(width: 7),
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: focused || selected
+                      ? Colors.black
+                      : AppColors.textPrimary,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (!_isLibrary) {
+      if (widget.fixedSourceId != null) {
+        return Text(
+          '${context.l10n.searching} ${widget.fixedSourceName ?? widget.fixedSourceId}',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(fontSize: 12, color: AppColors.textSecondary),
+        );
+      }
+      return BlocBuilder<SearchBloc, SearchState>(
+        buildWhen: (a, b) => a.currentSourceOnly != b.currentSourceOnly,
+        builder: (context, state) => Wrap(
+          spacing: 8,
+          runSpacing: 6,
+          children: [
+            chip(
+              'tv-search-scope-all',
+              Icons.travel_explore_rounded,
+              context.l10n.allSources,
+              () => context.read<SearchBloc>().add(
+                const SearchScopeChanged(false),
+              ),
+              selected: !state.currentSourceOnly,
+            ),
+            chip(
+              'tv-search-scope-current',
+              Icons.filter_center_focus_rounded,
+              context.l10n.currentSource,
+              () => context.read<SearchBloc>().add(
+                const SearchScopeChanged(true),
+              ),
+              selected: state.currentSourceOnly,
+            ),
+          ],
+        ),
+      );
+    }
+    final count = metaFilterActiveCount(_metaFilters);
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        // Match the three action-key columns, including their horizontal inset.
+        Widget slot(Widget child) => SizedBox(
+          width: constraints.maxWidth / 3,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+            child: child,
+          ),
+        );
+        return Wrap(
+          runSpacing: 6,
+          children: [
+            slot(
+              chip(
+                'tv-search-filters',
+                Icons.tune_rounded,
+                '${context.l10n.filters}${count > 0 ? ' · $count' : ''}',
+                _openMetaFilters,
+              ),
+            ),
+            slot(
+              chip(
+                'tv-search-genres',
+                Icons.grid_view_rounded,
+                context.l10n.genres,
+                _openNewGenres,
+              ),
+            ),
+            if (count > 0)
+              slot(
+                chip(
+                  'tv-search-clear-filters',
+                  Icons.close_rounded,
+                  context.l10n.clear,
+                  () => setState(() => _metaFilters = const MetaFilters()),
+                ),
+              ),
+          ],
+        );
+      },
+    );
   }
 
   Widget _libraryControls() {
@@ -525,6 +774,30 @@ class _SearchScreenTvState extends State<SearchScreenTv> {
 
   @override
   Widget build(BuildContext context) {
+    if (_newSearch) {
+      Widget keyboard(SearchState? state) => TvSearchInputScreen(
+        key: const ValueKey('tv-new-search-page'),
+        initialQuery: _controller.text,
+        compactStyle: true,
+        inlineSearch: true,
+        controls: _newSearchControls(),
+        requestKey:
+            '${_metaFilters.toJson()}:${widget.fixedSourceId}:${ZModePrefs.streamKind}',
+        recentQueries: widget.history?.recent() ?? const [],
+        loadRecommendations: _loadTypingRecommendations,
+        onQueryChanged: (query) => _controller.text = query,
+        onSearchSubmitted: _recordNewSearch,
+        onRecommendationSelected: _openNewSearchDetail,
+        submittedResults: state == null
+            ? null
+            : [for (final group in state.sortedVisibleGroups) ...group.items],
+        submittedLoading: state?.status == SearchStatus.loading,
+      );
+      if (_isLibrary) return keyboard(null);
+      return BlocBuilder<SearchBloc, SearchState>(
+        builder: (context, state) => keyboard(state),
+      );
+    }
     final hint = searchHintForScope(context, widget.scope);
     return BlocConsumer<SearchBloc, SearchState>(
       listenWhen: (a, b) =>
@@ -548,8 +821,7 @@ class _SearchScreenTvState extends State<SearchScreenTv> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   // ── Search field ──────────────────────────────────────────────────
-                  // TvTextField: D-pad lands without IME; OK focuses the same
-                  // editable box so leanback opens inline (no popup).
+                  // Original Classic field: OK / tap opens the system IME.
                   Padding(
                     padding: const EdgeInsets.fromLTRB(48, 20, 48, 10),
                     child: Row(

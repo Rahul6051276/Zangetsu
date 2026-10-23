@@ -16,7 +16,7 @@ publish_to: "none" # Remove this line if you wish to publish to pub.dev
 # https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
 # In Windows, build-name is used as the major, minor, and patch parts
 # of the product and file versions while build-number is used as the build suffix.
-version: 2.3.2+19600
+version: 2.3.3+19604
 
 environment:
   sdk: ^3.11.5
@@ -269,6 +269,7 @@ flutter:
   generate: true
   uses-material-design: true
   assets:
+    - assets/icons/lucide/
     # Shared with Android's native network security configuration.
     - android/app/src/main/res/raw/trusted_roots.pem
     - LICENSE-MPL-2.0.txt

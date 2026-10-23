@@ -5,7 +5,7 @@ import 'package:watch_app/core/hive/source_icon_store.dart';
 import 'package:watch_app/core/lnreader/novel_cloudflare.dart';
 
 import 'package:dio/dio.dart';
-import 'package:flutter/foundation.dart' show debugPrint;
+import 'package:flutter/foundation.dart' show debugPrint, kDebugMode;
 import 'package:flutter/services.dart' show MethodChannel, rootBundle;
 import 'package:get_it/get_it.dart';
 import 'package:hive_flutter/hive_flutter.dart';
@@ -128,6 +128,13 @@ import 'package:supabase_flutter/supabase_flutter.dart' show OtpType;
 
 final GetIt sl = GetIt.instance;
 
+/// Local sync ownership follows the visible account even while its session
+/// needs reconnecting. An unfinished auth restore may still use the session.
+String? localSyncUserId(AuthState state, String? sessionUserId) {
+  if (state.status == AuthStatus.unknown) return sessionUserId;
+  return state.isLoggedIn ? state.user!.id : null;
+}
+
 /// TV-only deferred boot work. Must not run during [initDependencies] on
 /// Apple TV (splash wedge). Android TV skips [loadAll] entirely — metadata
 /// Home does not need JS providers, and evaluating hanging sources blocked
@@ -224,6 +231,11 @@ Future<void> initDependencies() async {
     isTv = false;
   }
   if (!isTv && isAppleTv) isTv = true;
+  isTv = resolveIsTvMode(
+    deviceIsTv: isTv,
+    forceTvPreview: const bool.fromEnvironment('ZANGETSU_TV_PREVIEW'),
+    debugBuild: kDebugMode,
+  );
   if (isTv) tvosProvidersReady = false;
   sl.registerSingleton<AppMode>(AppMode(isTv: isTv));
 
@@ -243,9 +255,13 @@ Future<void> initDependencies() async {
   sl.registerLazySingleton<TvPairingService>(
     () => TvPairingService(sl<SupabaseService>()),
   );
-  // Resolved lazily at call time; null when signed out so the stores stay
-  // local-only.
-  String? currentUserId() => sl<SupabaseService>().currentUserId();
+  // Resolved lazily so cached signed-in accounts can keep local offline writes.
+  String? currentUserId() => sl.isRegistered<AuthCubit>()
+      ? localSyncUserId(
+          sl<AuthCubit>().state,
+          sl<SupabaseService>().currentUserId(),
+        )
+      : sl<SupabaseService>().currentUserId();
 
   // Supabase issues auth tokens; cloud data requests use the VPS client.
   final endpoint = Uri.tryParse(Environment.vpsSyncUrl);

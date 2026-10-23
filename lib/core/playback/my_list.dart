@@ -424,8 +424,10 @@ class MyListStore {
   }
 
   /// Ensure [m] is in the list (no-op if already present). Used by the status
-  /// sheet, where picking any status implies membership.
+  /// sheet, where picking any status implies membership. My List belongs to a
+  /// signed-in account; signed-in offline writes still stay local and retry.
   Future<void> add(MediaItem m) async {
+    if (_currentUserId() == null) return;
     if (_box.containsKey(_key(m))) return;
     await toggle(m);
   }
@@ -461,23 +463,19 @@ class MyListStore {
     final profileId = _profileId;
     final k = _key(m, profileId);
     final adding = !_box.containsKey(k);
+    final uid = _currentUserId();
+    if (adding && uid == null) return;
     if (adding) {
       await _box.put(k, _stamped(m).toJson());
     } else {
       await _box.delete(k);
     }
     revision.value++;
-    final uid = _currentUserId();
     if (uid == null) {
       AppLogger.instance.log(
-        'mylist cloud ${adding ? "add" : "remove"} skipped: no session',
+        'mylist cloud remove skipped: no signed-in account',
         level: 'W',
       );
-      if (adding) {
-        _markPending(k, profileId);
-      } else {
-        _markPendingDelete(m.sourceId, m.id, profileId);
-      }
       return;
     }
     try {

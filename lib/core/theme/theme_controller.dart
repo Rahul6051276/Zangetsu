@@ -7,10 +7,9 @@ import 'package:hive/hive.dart';
 
 import 'app_colors.dart';
 
-/// Owns the user's accent-colour choice. Persists it in Hive, applies it to
-/// [AppColors.accent] at startup, and bumps [revision] on change so the app can
-/// rebuild. Accent only — the dark base theme is unchanged. Default is the
-/// original coral, so an untouched install looks identical to before.
+/// Applies device appearance defaults and the active profile's optional
+/// overrides, then bumps [revision] so the app rebuilds. Untouched profiles
+/// inherit the existing device settings.
 class ThemeController {
   const ThemeController._();
 
@@ -51,6 +50,9 @@ class ThemeController {
   /// unread / unsupported / the toggle is off. Kept as plain [Color]s rather
   /// than the palette object so nothing else has to know about the tonal API.
   static ({Color accent, Color bg, Color surface, Color surface2})? _dynamic;
+  static Color? _profileAccent;
+  static bool? _profileMaterialYou;
+  static bool? _profileAmoled;
 
   /// Null until probed. False on iOS, Android < 12, or if the read fails —
   /// used to hide the setting rather than show a switch that does nothing.
@@ -72,9 +74,12 @@ class ThemeController {
   /// Whether the user asked for wallpaper colours. Off by default, so an
   /// untouched install looks exactly as it does today.
   static bool get materialYou =>
-      _box.get(_materialYouKey, defaultValue: false) as bool;
+      Platform.isAndroid &&
+      _supported != false &&
+      (_profileMaterialYou ??
+          _box.get(_materialYouKey, defaultValue: false) as bool);
 
-  /// Persist + apply the Material You toggle and notify listeners to rebuild.
+  /// Persist + apply the device-wide Material You fallback.
   static Future<void> setMaterialYou(bool on) async {
     await _box.put(_materialYouKey, on);
     await _loadPalette();
@@ -131,7 +136,7 @@ class ThemeController {
   static void _applyColors() {
     final d = materialYou ? _dynamic : null;
 
-    AppColors.accent = d?.accent ?? accent;
+    AppColors.accent = d?.accent ?? _profileAccent ?? accent;
 
     if (amoled) {
       AppColors.bg = amoledBg;
@@ -157,17 +162,19 @@ class ThemeController {
   }
 
   /// Whether the pure-black (AMOLED) background is on. Off by default.
-  static bool get amoled => _box.get(_amoledKey, defaultValue: false) as bool;
+  static bool get amoled =>
+      _profileAmoled ?? _box.get(_amoledKey, defaultValue: false) as bool;
 
-  /// Persist + apply the AMOLED toggle and notify listeners to rebuild.
+  /// Persist + apply the device-wide AMOLED fallback.
   static Future<void> setAmoled(bool on) async {
     await _box.put(_amoledKey, on);
     _applyColors();
     revision.value++;
   }
 
-  /// The saved accent, or the default coral when unset.
+  /// The active profile's accent, or the saved device fallback.
   static Color get accent {
+    if (_profileAccent != null) return _profileAccent!;
     final v = _box.get(_key) as int?;
     return v == null ? AppColors.defaultAccent : Color(v);
   }
@@ -191,9 +198,34 @@ class ThemeController {
   static bool isDefault(Color color) =>
       color.toARGB32() == AppColors.defaultAccent.toARGB32();
 
-  /// Persist + apply a new accent and notify listeners to rebuild.
+  /// Persist + apply a new device-wide accent fallback.
   static Future<void> setAccent(Color color) async {
     await _box.put(_key, color.toARGB32());
+    _applyColors();
+    revision.value++;
+  }
+
+  /// Applies the active profile's optional overrides over the existing app
+  /// defaults. Null keeps the prior device-wide value for older profiles.
+  static Future<void> applyProfileTheme({
+    required int? accentColor,
+    required bool? materialYou,
+    required bool? amoled,
+  }) async {
+    if (!Hive.isBoxOpen(boxName)) await init();
+    final wasMaterialYou = ThemeController.materialYou;
+    _profileAccent =
+        accentColor == null || accentColor < 0 || accentColor > 0xFFFFFFFF
+        ? null
+        : Color(accentColor);
+    _profileMaterialYou = materialYou;
+    _profileAmoled = amoled;
+    final useMaterialYou = ThemeController.materialYou;
+    if (useMaterialYou && (!wasMaterialYou || _dynamic == null)) {
+      await _loadPalette();
+    } else if (!useMaterialYou) {
+      _dynamic = null;
+    }
     _applyColors();
     revision.value++;
   }

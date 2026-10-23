@@ -2,7 +2,7 @@ import 'dart:async';
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
-import 'package:hive/hive.dart';
+import 'package:hive_flutter/hive_flutter.dart';
 import '../../core/ui/app_dialog.dart';
 import '../../core/ui/app_toast.dart';
 import '../../core/ui/settings_widgets.dart';
@@ -262,7 +262,9 @@ class _DownloadsScreenState extends State<DownloadsScreen>
 
   @override
   Widget build(BuildContext context) {
-    if (sl<AppMode>().isTv) return const DownloadsScreenTv();
+    if (sl<AppMode>().isTv) {
+      return DownloadsScreenTv(resume: sl<ResumeStore>());
+    }
     final manager = sl<DownloadManager>();
     final store = sl<ChapterDownloadStore>();
     return Scaffold(
@@ -645,7 +647,12 @@ class _ShowGroup extends StatelessWidget {
           ),
         ),
         if (expanded)
-          for (final r in episodes) DownloadTile(record: r, manager: manager),
+          for (final r in episodes)
+            DownloadTile(
+              record: r,
+              manager: manager,
+              resume: sl<ResumeStore>(),
+            ),
         const SizedBox(height: 6),
       ],
     );
@@ -790,9 +797,19 @@ Future<void> launchDownloadedEpisode(
 }
 
 class DownloadTile extends StatelessWidget {
-  const DownloadTile({super.key, required this.record, required this.manager});
+  const DownloadTile({
+    super.key,
+    required this.record,
+    required this.manager,
+    this.resume,
+  });
   final DownloadRecord record;
   final DownloadManager manager;
+
+  /// Per-episode watched position, shown under finished downloads so the user
+  /// can tell where they left off. Optional only so widget tests can build the
+  /// tile without Hive/GetIt; the real screens always pass it.
+  final ResumeStore? resume;
 
   String _epLabel(AppLocalizations l10n) {
     final n = record.episodeNumber?.toInt();
@@ -878,6 +895,10 @@ class DownloadTile extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(_subtitle(l10n), style: AppText.caption),
+          if (isDone) ...[
+            const SizedBox(height: 3),
+            _WatchMeta(record: record, resume: resume),
+          ],
           if (record.status == DownloadStatus.downloading ||
               record.status == DownloadStatus.paused) ...[
             const SizedBox(height: 6),
@@ -896,6 +917,101 @@ class DownloadTile extends StatelessWidget {
       trailing: _TileMenu(record: record, manager: manager),
     );
   }
+}
+
+/// "quality · CC langs · watched / total" under a finished download, so the
+/// offline list answers "which episode was I on?" without opening one.
+///
+/// Reads only — no download/playback logic lives here. The box listenable
+/// refreshes the line as soon as the player saves a position.
+class _WatchMeta extends StatelessWidget {
+  const _WatchMeta({required this.record, required this.resume});
+  final DownloadRecord record;
+  final ResumeStore? resume;
+
+  @override
+  Widget build(BuildContext context) {
+    final resume = this.resume;
+    if (resume == null) return _line(context, null);
+    return ValueListenableBuilder<Box<Map>>(
+      valueListenable: Hive.box<Map>(ResumeStore.boxName).listenable(),
+      builder: (context, _, _) => _line(
+        context,
+        resume.get(record.sourceId, record.showUrl, record.episodeId),
+      ),
+    );
+  }
+
+  Widget _line(BuildContext context, ResumeMark? mark) {
+    final l10n = context.l10n;
+    final quality = record.quality.trim();
+    final finished = mark?.finished ?? false;
+    final hasDuration = (mark?.duration.inMilliseconds ?? 0) > 0;
+    String? watched;
+    if (mark != null && mark.finished) {
+      watched = hasDuration ? '${_clock(mark.duration)} ✓' : '✓';
+    } else if (mark != null && hasDuration) {
+      watched = '${_clock(mark.position)} / ${_clock(mark.duration)}';
+    }
+    final parts = <String>[
+      if (quality.isNotEmpty)
+        quality.toLowerCase() == 'best' ? l10n.best : quality,
+      if (record.subtitles.isNotEmpty) _ccLabel(),
+      ?watched,
+    ];
+    if (parts.isEmpty) return const SizedBox.shrink();
+    final showBar =
+        !finished &&
+        mark != null &&
+        hasDuration &&
+        mark.position.inMilliseconds > 0;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          parts.join(' · '),
+          style: AppText.caption,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+        if (showBar) ...[
+          const SizedBox(height: 4),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(2),
+            child: LinearProgressIndicator(
+              value:
+                  (mark.position.inMilliseconds / mark.duration.inMilliseconds)
+                      .clamp(0.0, 1.0),
+              minHeight: 2.5,
+              color: AppColors.accent,
+              backgroundColor: AppColors.surface2,
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
+  String _ccLabel() {
+    final langs = <String>{};
+    for (final sub in record.subtitles) {
+      final lang = sub.lang.trim();
+      if (lang.isEmpty) continue;
+      langs.add((lang.length > 3 ? lang.substring(0, 3) : lang).toUpperCase());
+    }
+    if (langs.isEmpty) return 'CC';
+    final shown = langs.take(2).join(' ');
+    return 'CC $shown${langs.length > 2 ? ' +${langs.length - 2}' : ''}';
+  }
+}
+
+/// `m:ss` under an hour, `h:mm:ss` from then on — language-neutral.
+String _clock(Duration d) {
+  final m = d.inMinutes % 60;
+  final s = (d.inSeconds % 60).toString().padLeft(2, '0');
+  return d.inHours > 0
+      ? '${d.inHours}:${m.toString().padLeft(2, '0')}:$s'
+      : '$m:$s';
 }
 
 class _StatusGlyph extends StatelessWidget {

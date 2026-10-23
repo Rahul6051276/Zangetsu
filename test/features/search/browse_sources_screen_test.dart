@@ -7,6 +7,7 @@ import 'package:watch_app/core/di/injector.dart' show sl;
 import 'package:watch_app/core/provider/provider_registry.dart';
 import 'package:watch_app/core/provider/provider_repo_registry.dart';
 import 'package:watch_app/features/search/browse_sources_screen.dart';
+import 'package:watch_app/features/sources/providers_hub_screen.dart';
 
 import '../../support/picker_deps.dart';
 
@@ -23,7 +24,16 @@ Future<void> _seedJsSource({required String id, required String type}) async {
     name: 'Test Repo',
     description: '',
     lastSyncedAt: DateTime.now(),
-    sources: [RepoSource(id: id, name: id, version: '1.0.0', type: type, lang: 'en', file: '$id.js')],
+    sources: [
+      RepoSource(
+        id: id,
+        name: id,
+        version: '1.0.0',
+        type: type,
+        lang: 'en',
+        file: '$id.js',
+      ),
+    ],
   );
   await reposBox.put(repoUrl, repo.toJson());
 
@@ -127,5 +137,15 @@ void main() {
     await t.pumpAndSettle();
 
     expect(find.byIcon(Icons.search_rounded), findsOneWidget);
+  });
+
+  testWidgets('provider settings action opens the providers hub', (t) async {
+    await t.pumpWidget(const MaterialApp(home: BrowseSourcesScreen()));
+    await t.pumpAndSettle();
+
+    await t.tap(find.byKey(const ValueKey('browse-sources-providers')));
+    await t.pumpAndSettle();
+
+    expect(find.byType(ProvidersHubScreen), findsOneWidget);
   });
 }

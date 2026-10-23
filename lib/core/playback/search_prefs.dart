@@ -41,6 +41,23 @@ class SearchPrefs extends ChangeNotifier {
 
   Box get _box => Hive.box(boxName);
 
+  /// Classic retains the original system keyboard; New uses the compact grid.
+  String get tvSearchStyle {
+    final saved = _box.get('tvSearchStyle');
+    if (saved != null) return saved == 'new' ? 'new' : 'classic';
+    // Preserve the choice from the earlier test build.
+    return _box.get('youtubeTvKeyboard', defaultValue: false) == true
+        ? 'new'
+        : 'classic';
+  }
+
+  /// Persists the selected search experience and rebuilds listening screens.
+  Future<void> setTvSearchStyle(String style) async {
+    final value = style == 'new' ? 'new' : 'classic';
+    await _box.put('tvSearchStyle', value);
+    notifyListeners();
+  }
+
   // ── Layout (the one Settings exposes) ─────────────────────────────────────
   /// Default is [SearchLayout.vertical] — the grid most users expect and the
   /// densest way to scan many results.
@@ -69,6 +86,7 @@ class SearchPrefs extends ChangeNotifier {
     await _box.put(_currentSourceOnlyKey, value);
     notifyListeners();
   }
+
   // ── Remembered filter/sort state (read once when a search runs) ───────────
   /// Stored by enum NAME so the index can shift without breaking persistence.
   String? get contentFilterName => _box.get(_contentFilterKey) as String?;

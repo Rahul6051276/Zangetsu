@@ -233,6 +233,8 @@
 	"installCloudStreamSources": "تثبيت مصادر CloudStream",
 	"connectionsTvSubtitle": "‏AniList وMyAnimeList وSimkl",
 	"profile": "الملف الشخصي",
+	"changeProfile": "تغيير الملف الشخصي؟",
+	"chooseWhoIsWatching": "اختر من يشاهد.",
 	"home": "الرئيسية",
 	"myList": "My List",
 	"schedule": "جدول البث",

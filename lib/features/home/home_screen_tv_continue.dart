@@ -33,7 +33,7 @@ class _TvContinueRail extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 48),
+            padding: const EdgeInsets.only(left: 12, right: 48),
             child: Text(
               context.l10n.continueWatching,
               style: const TextStyle(
@@ -51,7 +51,7 @@ class _TvContinueRail extends StatelessWidget {
             child: ListView.builder(
               scrollDirection: Axis.horizontal,
               clipBehavior: Clip.none,
-              padding: const EdgeInsets.symmetric(horizontal: 40),
+              padding: const EdgeInsets.only(left: 4, right: 40),
               itemCount: history.length,
               itemBuilder: (context, index) {
                 final e = history[index];

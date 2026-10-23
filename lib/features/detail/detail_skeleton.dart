@@ -1,7 +1,6 @@
 // Loading skeleton and its shimmer gradient.
 part of 'detail_screen.dart';
 
-
 /// Shimmering placeholder shown while the detail loads — mirrors the real
 /// layout (backdrop, title/meta, Play/Download, synopsis, credits) so the
 /// screen eases in instead of popping from a blank spinner to a full page.
@@ -10,7 +9,11 @@ part of 'detail_screen.dart';
 /// skeleton here so they all read as the same material.
 Widget _bone(double w, double h, [double r = 8]) => ClipRRect(
   borderRadius: BorderRadius.circular(r),
-  child: SizedBox(width: w, height: h, child: ColoredBox(color: AppColors.surface2)),
+  child: SizedBox(
+    width: w,
+    height: h,
+    child: ColoredBox(color: AppColors.surface2),
+  ),
 );
 
 /// Sweeps the shimmer sheen across whatever flat shapes it wraps. Owns the
@@ -28,6 +31,7 @@ class _Shimmer extends StatefulWidget {
 class _ShimmerState extends State<_Shimmer>
     with SingleTickerProviderStateMixin {
   late final AnimationController _ctrl;
+  Animation<double>? _routeAnim;
 
   @override
   void initState() {
@@ -37,11 +41,35 @@ class _ShimmerState extends State<_Shimmer>
     _ctrl = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 1250),
-    )..repeat();
+    );
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final routeAnim = ModalRoute.of(context)?.animation;
+    if (identical(routeAnim, _routeAnim)) return;
+    _routeAnim?.removeStatusListener(_syncToRoute);
+    _routeAnim = routeAnim;
+    _routeAnim?.addStatusListener(_syncToRoute);
+    _syncToRoute(_routeAnim?.status ?? AnimationStatus.completed);
+  }
+
+  /// Only sweep the sheen while the page is settled. The [ShaderMask] repaints
+  /// the whole skeleton, so letting it run underneath the detail route's
+  /// slide transition stacked two full-screen operations and dropped frames
+  /// on low-end phones — the same collision the slide-only route fixed.
+  void _syncToRoute(AnimationStatus status) {
+    if (status == AnimationStatus.completed) {
+      if (!_ctrl.isAnimating) _ctrl.repeat();
+    } else {
+      _ctrl.stop();
+    }
   }
 
   @override
   void dispose() {
+    _routeAnim?.removeStatusListener(_syncToRoute);
     _ctrl.dispose();
     super.dispose();
   }

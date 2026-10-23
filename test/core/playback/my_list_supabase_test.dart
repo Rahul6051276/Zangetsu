@@ -209,6 +209,36 @@ void main() {
     if (await tmpDir.exists()) await tmpDir.delete(recursive: true);
   });
 
+  test('does not save to My List while signed out', () async {
+    final loggedOut = MyListStore(SupabaseService(), () => null, remote: fake);
+
+    await loggedOut.add(_item(id: 'guest'));
+
+    expect(loggedOut.all(), isEmpty);
+    expect(Hive.box<Map>(MyListStore.boxName).isEmpty, isTrue);
+    expect(loggedOut.pendingKeys(), isEmpty);
+  });
+
+  test(
+    'guest removal cannot delete a signed-in account row on retry',
+    () async {
+      final item = _item(id: 'shared');
+      await store.add(item);
+      final loggedOut = MyListStore(
+        SupabaseService(),
+        () => null,
+        remote: fake,
+      );
+
+      await loggedOut.remove(item);
+      expect(loggedOut.all(), isEmpty);
+      expect(loggedOut.pendingDeleteKeys(), isEmpty);
+
+      await store.retryPending();
+      expect(fake.rows.any((row) => row['item_id'] == 'shared'), isTrue);
+    },
+  );
+
   test('add() upserts a row with the right composite key + fields', () async {
     await store.add(_item());
 
@@ -570,9 +600,11 @@ void main() {
       'status': 'completed',
       'added_at': 0,
     });
-    final loggedOut = MyListStore(SupabaseService(), () => null, remote: fake);
-    await loggedOut.add(_item(id: 'shared'));
-    await loggedOut.add(_item(id: 'localOnly'));
+    // These persisted local rows can come from a signed-in offline session.
+    await Hive.box<Map>(MyListStore.boxName).putAll({
+      'src::shared': _item(id: 'shared').toJson(),
+      'src::localOnly': _item(id: 'localOnly').toJson(),
+    });
 
     final r = await store.pushAllLocalToCloud();
 
@@ -645,14 +677,10 @@ void main() {
   test(
     'pullFromCloud() with an EMPTY cloud does NOT wipe a local-only item',
     () async {
-      // Add an item while logged-out so it never reaches the fake cloud, then pull
-      // against the empty cloud — a merge must keep it (replace used to wipe it).
-      final loggedOut = MyListStore(
-        SupabaseService(),
-        () => null,
-        remote: fake,
-      );
-      await loggedOut.add(_item(id: 'localOnly'));
+      // A signed-in save remains local if the network write fails; an empty
+      // pull before the first successful seed must not erase that queued item.
+      fake.failNext = true;
+      await store.add(_item(id: 'localOnly'));
       expect(fake.rows.where((r) => r['user_key'] == 'user1'), isEmpty);
 
       await store.pullFromCloud();
@@ -664,14 +692,12 @@ void main() {
   test(
     'seedCloudIfNeeded() backfills once, then a pull keeps everything',
     () async {
-      final loggedOut = MyListStore(
-        SupabaseService(),
-        () => null,
-        remote: fake,
-      );
-      await loggedOut.add(_item(id: 'a'));
-      await loggedOut.add(_item(id: 'b'));
-      expect(fake.rows.where((r) => r['user_key'] == 'user1'), isEmpty);
+      // Persisted signed-in local rows are backfilled on the next successful
+      // sync; unauthenticated users cannot create new My List entries.
+      await Hive.box<Map>(MyListStore.boxName).putAll({
+        'src::a': _item(id: 'a').toJson(),
+        'src::b': _item(id: 'b').toJson(),
+      });
 
       await store.seedCloudIfNeeded();
       expect(fake.rows.where((r) => r['user_key'] == 'user1'), hasLength(2));

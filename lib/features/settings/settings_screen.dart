@@ -460,9 +460,23 @@ class _SettingsScreenState extends State<SettingsScreen> {
     if (mounted) setState(() => _dnsChoice = picked!);
   }
 
-  /// Bottom sheet / TV dialog to pick the search results layout (grid vs
-  /// CloudStream-style rows). Persisted via [SearchPrefs]; the search screen
-  /// reads it live.
+  /// Selects the TV keyboard presentation independently of result layout.
+  Future<void> _pickTvSearchStyle() async {
+    final prefs = sl<SearchPrefs>();
+    final selected = await showDialog<String>(
+      context: context,
+      builder: (ctx) => _TvOptionPicker<String>(
+        title: 'Search style',
+        options: const [('classic', 'Classic'), ('new', 'New')],
+        current: prefs.tvSearchStyle,
+      ),
+    );
+    if (selected == null) return;
+    await prefs.setTvSearchStyle(selected);
+    if (mounted) setState(() {});
+  }
+
+  /// Picks the result layout independently of the TV keyboard style.
   Future<void> _pickSearchLayout() async {
     final prefs = sl<SearchPrefs>();
     final SearchLayout? picked;
@@ -1154,6 +1168,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
             'navigation bar tabs dock bottom reorder hide downloads '
             'history customise customize interface',
         onTap: () => _push(const NavTabsScreen()),
+      ),
+    if (_isTv)
+      _SettingsEntry(
+        section: SettingsSection.interface,
+        group: 'Layout',
+        icon: Icons.keyboard_alt_outlined,
+        title: 'Search style',
+        subtitle: 'Choose Classic or New for search',
+        keywords: 'tv search style keyboard classic new alphabet letters input',
+        trailing: _value(
+          sl<SearchPrefs>().tvSearchStyle == 'new' ? 'New' : 'Classic',
+        ),
+        onTap: _pickTvSearchStyle,
       ),
     _SettingsEntry(
       section: SettingsSection.interface,

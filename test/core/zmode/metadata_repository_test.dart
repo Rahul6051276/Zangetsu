@@ -1,3 +1,6 @@
+import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
+import 'package:watch_app/features/home/tv_search_input_screen.dart';
 import 'dart:async';
 import 'dart:io';
 
@@ -19,6 +22,7 @@ import 'package:watch_app/core/ui/streaming_prefs.dart';
 import 'package:watch_app/core/zmode/match_store.dart';
 import 'package:watch_app/core/zmode/zmode_source_prefs.dart';
 import 'package:watch_app/core/zmode/metadata_repository.dart';
+import 'package:watch_app/core/zmode/metadata_filters.dart';
 import 'package:watch_app/core/zmode/playback_resolver.dart';
 import 'package:watch_app/core/zmode/source_matcher.dart';
 import 'package:watch_app/core/zmode/tmdb_catalogue.dart';
@@ -79,9 +83,36 @@ MetadataRepository _metaRepo({
   browseKind: browseKind,
 );
 
+/// An installed source that can answer while both metadata services are down.
+class _ContingencySource extends _Src {
+  int searches = 0;
+  @override
+  Future<({List<MediaItem> items, SourceOutcome outcome})> searchStatus(
+    String query, {
+    String category = 'sub',
+    String? sourceId,
+    String? filtersJson,
+    bool cache = false,
+    int page = 1,
+  }) async {
+    searches++;
+    return (
+      items: [
+        MediaItem(
+          id: 'naruto',
+          title: 'Naruto',
+          url: 'https://source.example/naruto',
+          sourceId: 'contingency',
+          type: ProviderType.anime,
+        ),
+      ],
+      outcome: SourceOutcome.ok,
+    );
+  }
+}
+
 class _Src implements SourceRepository {
-  _Src({this.streams = _stream});
-  List<VideoSource> streams;
+  List<VideoSource> streams = _stream;
   final log = <String>[];
   @override
   noSuchMethod(Invocation i) => super.noSuchMethod(i);
@@ -177,9 +208,9 @@ class _Src implements SourceRepository {
 }
 
 class _EpSrc implements SourceRepository {
-  _EpSrc(this._eps, {this.streams = _stream});
+  _EpSrc(this._eps);
   final List<Episode> _eps;
-  final List<VideoSource> streams;
+  final List<VideoSource> streams = _stream;
   final log = <String>[];
   @override
   noSuchMethod(Invocation i) => super.noSuchMethod(i);
@@ -620,6 +651,243 @@ void main() {
     expect(fallback, 'MyAnimeList');
   });
 
+  for (final status in [403, 200, 429, 408]) {
+    test('TV search recovers from AniList outage $status', () async {
+      var backupCalls = 0;
+      final dio = Dio();
+      dio.interceptors.add(
+        InterceptorsWrapper(
+          onRequest: (request, handler) {
+            final anilist = request.uri.host == 'graphql.anilist.co';
+            if (anilist && status == 408) {
+              return; // A provider that never responds.
+            }
+            if (!anilist) backupCalls++;
+            handler.resolve(
+              Response(
+                requestOptions: request,
+                statusCode: anilist ? status : 200,
+                data: anilist
+                    ? {
+                        'errors': [
+                          {
+                            'message': 'API temporarily disabled',
+                            'status': status,
+                          },
+                        ],
+                      }
+                    : {
+                        'data': [
+                          {
+                            'node': {
+                              'id': 20,
+                              'title': 'Naruto',
+                              'media_type': 'tv',
+                            },
+                          },
+                        ],
+                      },
+              ),
+            );
+          },
+        ),
+      );
+      addTearDown(() => dio.close(force: true));
+      final r = _metaRepo(
+        sources: src,
+        store: store,
+        prefs: prefs,
+        browseKind: () => ZKind.anime,
+        matcher: SourceMatcher(
+          sources: src,
+          store: store,
+          prefs: prefs,
+          candidates: (_) => [(id: 'allanime', name: 'AllAnime')],
+        ),
+        anilist: AniListCatalogue(AniListCatalogue.dioGql(dio)),
+        mal: MalCatalogue(dio),
+      );
+      expect(
+        (await r.tvSearchWithSourceRecovery('Naruto')).single.title,
+        'Naruto',
+      );
+      expect(backupCalls, 1);
+    });
+  }
+  test(
+    'TV search uses installed source when both metadata providers are down',
+    () async {
+      final source = _ContingencySource();
+      final dio = Dio();
+      dio.interceptors.add(
+        InterceptorsWrapper(
+          onRequest: (request, handler) {
+            handler.resolve(
+              Response(
+                requestOptions: request,
+                statusCode: 403,
+                data: {
+                  'errors': [
+                    {'message': 'Service unavailable'},
+                  ],
+                },
+              ),
+            );
+          },
+        ),
+      );
+      addTearDown(() => dio.close(force: true));
+      String? label;
+      final r = _metaRepo(
+        sources: source,
+        store: store,
+        prefs: prefs,
+        browseKind: () => ZKind.anime,
+        candidates: (_) => [(id: 'contingency', name: 'Installed source')],
+        matcher: SourceMatcher(
+          sources: source,
+          store: store,
+          prefs: prefs,
+          candidates: (_) => [(id: 'contingency', name: 'Installed source')],
+        ),
+        anilist: AniListCatalogue(AniListCatalogue.dioGql(dio)),
+        mal: MalCatalogue(dio),
+        onProviderFallback: (name) => label = name,
+      );
+      final items = await r.tvSearchWithSourceRecovery('Naruto');
+      expect(items.single.title, 'Naruto');
+      expect(items.single.sourceId, 'contingency');
+      expect(items.single.url, 'https://source.example/naruto');
+      expect(source.searches, 1);
+      expect(label, contains('source catalogue'));
+    },
+  );
+
+  test(
+    'legitimate empty metadata search does not query source catalogues',
+    () async {
+      final source = _ContingencySource();
+      final r = _metaRepo(
+        sources: source,
+        store: store,
+        prefs: prefs,
+        browseKind: () => ZKind.anime,
+        candidates: (_) => [(id: 'contingency', name: 'Installed source')],
+        matcher: SourceMatcher(
+          sources: source,
+          store: store,
+          prefs: prefs,
+          candidates: (_) => [(id: 'contingency', name: 'Installed source')],
+        ),
+        anilist: AniListCatalogue(
+          (q, v) async => {
+            'Page': {'media': []},
+          },
+        ),
+      );
+      expect(await r.search('no such title'), isEmpty);
+      expect(await r.searchFiltered('no such title'), isEmpty);
+      expect(source.searches, 0);
+    },
+  );
+  test(
+    'filtered mobile search never substitutes unfiltered source items',
+    () async {
+      final source = _ContingencySource();
+      final r = _metaRepo(
+        sources: source,
+        store: store,
+        prefs: prefs,
+        browseKind: () => ZKind.anime,
+        candidates: (_) => [(id: 'contingency', name: 'Installed source')],
+        matcher: SourceMatcher(
+          sources: source,
+          store: store,
+          prefs: prefs,
+          candidates: (_) => [(id: 'contingency', name: 'Installed source')],
+        ),
+        anilist: AniListCatalogue((q, v) async => throw StateError('offline')),
+      );
+      try {
+        await r.searchFiltered(
+          'Naruto',
+          filters: const MetaFilters(genres: ['Action']),
+        );
+      } catch (_) {}
+      expect(source.searches, 0);
+    },
+  );
+  testWidgets(
+    'Apple TV keyboard recovers suggestions and cards from source catalogue',
+    (tester) async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+      try {
+        final source = _ContingencySource();
+        final dio = Dio();
+        dio.interceptors.add(
+          InterceptorsWrapper(
+            onRequest: (request, handler) {
+              handler.resolve(
+                Response(
+                  requestOptions: request,
+                  statusCode: 403,
+                  data: {
+                    'errors': [
+                      {'message': 'Service unavailable'},
+                    ],
+                  },
+                ),
+              );
+            },
+          ),
+        );
+        addTearDown(() => dio.close(force: true));
+        final repository = _metaRepo(
+          sources: source,
+          store: store,
+          prefs: prefs,
+          browseKind: () => ZKind.anime,
+          candidates: (_) => [(id: 'contingency', name: 'Installed source')],
+          matcher: SourceMatcher(
+            sources: source,
+            store: store,
+            prefs: prefs,
+            candidates: (_) => [(id: 'contingency', name: 'Installed source')],
+          ),
+          anilist: AniListCatalogue(AniListCatalogue.dioGql(dio)),
+          mal: MalCatalogue(dio),
+        );
+        MediaItem? opened;
+        await tester.pumpWidget(
+          MaterialApp(
+            home: TvSearchInputScreen(
+              initialQuery: 'Naruto',
+              compactStyle: true,
+              inlineSearch: true,
+              loadRecommendations: (query) =>
+                  repository.tvSearchWithSourceRecovery(query),
+              onRecommendationSelected: (item) => opened = item,
+            ),
+          ),
+        );
+        await tester.pump(const Duration(milliseconds: 400));
+        await tester.pumpAndSettle();
+        expect(find.byKey(const ValueKey('tv-key-A')), findsOneWidget);
+        expect(find.byType(TextField), findsNothing);
+        expect(find.text('Naruto'), findsNWidgets(3));
+        final card = find.byKey(
+          const ValueKey('tv-recommendation-contingency-naruto'),
+        );
+        expect(card, findsOneWidget);
+        await tester.tap(card);
+        await tester.pumpAndSettle();
+        expect(opened?.sourceId, 'contingency');
+        expect(opened?.url, 'https://source.example/naruto');
+      } finally {
+        debugDefaultTargetPlatformOverride = null;
+      }
+    },
+  );
   test('sourceId is the pseudo id and displayName is human', () {
     expect(repo.sourceId, ZmodeIds.sourceId);
     expect(repo.displayName(ZmodeIds.sourceId), isNotEmpty);

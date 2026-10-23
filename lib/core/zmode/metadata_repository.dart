@@ -43,6 +43,7 @@ class MetadataRepository implements CatalogueRepository {
     required MatchStore matchStore,
     required ZSourcePrefs sourcePrefs,
     required ZKind Function() browseKind,
+    List<({String id, String name})> Function(ZKind)? searchCandidates,
     MalCatalogue? mal,
     SimklCatalogue? simkl,
     MetadataProviderPrefs? providerPrefs,
@@ -55,6 +56,8 @@ class MetadataRepository implements CatalogueRepository {
        _simkl = simkl,
        _providerPrefs = providerPrefs,
        _onFallback = onProviderFallback,
+       _searchCandidates =
+           searchCandidates ?? candidates ?? _defaultCandidates(sources),
        _src = sources,
        _matcher = matcher,
        _browseKind = browseKind,
@@ -113,6 +116,7 @@ class MetadataRepository implements CatalogueRepository {
   final SourceMatcher _matcher;
   final PlaybackResolver _playback;
   final ZKind Function() _browseKind;
+  final List<({String id, String name})> Function(ZKind) _searchCandidates;
 
   /// Exposed so [PlaybackResolver] can be registered in DI and accessed
   /// directly for cache invalidation on playback errors.
@@ -225,6 +229,7 @@ class MetadataRepository implements CatalogueRepository {
     Future<T> Function(AnimeCatalogue c) op, {
     bool Function(T)? treatAsFailure,
     PreferredProvider? prefer,
+    Duration? requestTimeout,
   }) async {
     var (primary, backup) = _animeChain;
     // A caller that knows which catalogue this title came from wins over the
@@ -245,8 +250,14 @@ class MetadataRepository implements CatalogueRepository {
     // a closure.
     final chosen = primary;
     final standIn = backup;
+    // Search must leave time for the backup before the screen gives up.
+    Future<T> call(AnimeCatalogue provider) {
+      final future = op(provider);
+      return requestTimeout == null ? future : future.timeout(requestTimeout);
+    }
+
     return _withProviderFallback(
-      primary: () => op(chosen),
+      primary: () => call(chosen),
       backup: standIn == null ? null : () => op(standIn),
       fallbackLabel: standIn == null ? '' : _fallbackName(standIn),
       treatAsFailure: treatAsFailure,
@@ -511,6 +522,53 @@ class MetadataRepository implements CatalogueRepository {
       ? _videoChain.$1.supportsFilters
       : _animeChain.$1.supportsFilters;
 
+  /// Uses enabled, language-compatible source catalogues only when metadata
+  /// fails. Source URLs and IDs stay intact so opening a result uses its source.
+  Future<List<MediaItem>> _searchWithContingency(
+    String query,
+    ZKind kind,
+    Future<List<MediaItem>> Function() metadata,
+  ) async {
+    try {
+      return await metadata().timeout(const Duration(seconds: 6));
+    } catch (error, stack) {
+      if (query.trim().isEmpty) Error.throwWithStackTrace(error, stack);
+      final candidates = _searchCandidates(kind).take(3).toList();
+      final results = await Future.wait(
+        candidates.map((source) async {
+          try {
+            final result = await _src
+                .searchStatus(query, sourceId: source.id, cache: true)
+                .timeout(const Duration(seconds: 8));
+            return (source: source, result: result);
+          } catch (_) {
+            return (
+              source: source,
+              result: (items: <MediaItem>[], outcome: SourceOutcome.error),
+            );
+          }
+        }),
+      );
+      final available = results
+          .where(
+            (r) =>
+                r.result.outcome == SourceOutcome.ok ||
+                r.result.outcome == SourceOutcome.empty,
+          )
+          .toList();
+      if (available.isEmpty) Error.throwWithStackTrace(error, stack);
+      _onFallback?.call(
+        'source catalogue: ${available.map((r) => r.source.name).join(', ')}',
+      );
+      final seen = <String>{};
+      return [
+        for (final r in available)
+          for (final item in r.result.items)
+            if (seen.add('${item.sourceId}:${item.id}')) item,
+      ];
+    }
+  }
+
   /// Search and/or browse with filters. An empty [query] plus filters is a
   /// browse; both are the same request to the providers that support it.
   Future<List<MediaItem>> searchFiltered(
@@ -532,6 +590,33 @@ class MetadataRepository implements CatalogueRepository {
         : await _viaAnime(
             (c) => c.searchFiltered(query, k, filters: filters, page: page),
           );
+    items.forEach(_remember);
+    return items;
+  }
+
+  /// TV's optional source recovery; ordinary catalogue search keeps its
+  /// existing provider and filter behavior on phones.
+  Future<List<MediaItem>> tvSearchWithSourceRecovery(
+    String query, {
+    MetaFilters? filters,
+  }) async {
+    if (query.trim().isEmpty ||
+        (filters?.isNotEmpty ?? false) ||
+        _searchCandidates(_browseKind()).isEmpty) {
+      return searchFiltered(query, filters: filters);
+    }
+    final kind = _browseKind();
+    final items = await _searchWithContingency(query, kind, () async {
+      final metadata = _isTmdb(kind)
+          ? await _viaVideo((c) => c.searchFiltered(query))
+          : await _viaAnime(
+              (c) => c.searchFiltered(query, kind),
+              treatAsFailure: (items) => items.isEmpty,
+              requestTimeout: const Duration(seconds: 4),
+            );
+      if (metadata.isEmpty) throw StateError('No metadata results');
+      return metadata;
+    });
     items.forEach(_remember);
     return items;
   }

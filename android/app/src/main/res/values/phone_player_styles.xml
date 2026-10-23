@@ -7,16 +7,17 @@
         <item name="android:padding">12dp</item>
         <item name="android:clickable">true</item>
         <item name="android:focusable">true</item>
-        <item name="android:foreground">?android:attr/selectableItemBackgroundBorderless</item>
+        <item name="android:foreground">@drawable/phone_player_icon_ripple</item>
         <item name="android:tint">@color/phone_player_on_surface</item>
     </style>
     <style name="PhonePlayerActionButton.Transport" parent="PhonePlayerActionButton" />
     <style name="PhonePlayerDialog" parent="android:Theme.DeviceDefault.Dialog.Alert">
         <item name="android:dialogCornerRadius">28dp</item>
-        <item name="android:windowBackground">@color/phone_player_surface</item>
+        <item name="android:windowBackground">@drawable/phone_player_dialog_surface</item>
         <item name="android:textColor">@color/phone_player_on_surface</item>
         <item name="android:textColorPrimary">@color/phone_player_on_surface</item>
-        <item name="android:windowMinWidthMajor">80%</item>
-        <item name="android:windowMinWidthMinor">80%</item>
+        <item name="android:windowMinWidthMajor">60%</item>
+        <item name="android:windowMinWidthMinor">84%</item>
+        <item name="android:colorAccent">@color/phone_player_accent</item>
     </style>
 </resources>

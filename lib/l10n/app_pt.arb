@@ -233,6 +233,8 @@
 	"installCloudStreamSources": "Instalar fontes CloudStream",
 	"connectionsTvSubtitle": "AniList, MyAnimeList, Simkl",
 	"profile": "Perfil",
+	"changeProfile": "Alterar perfil?",
+	"chooseWhoIsWatching": "Escolha quem está assistindo.",
 	"home": "Início",
 	"myList": "Minha lista",
 	"schedule": "Agenda",

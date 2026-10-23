@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import 'package:image/image.dart' as img;
 
 import '../app_config.dart';
+import 'profile_avatar_reference.dart';
 
 /// Uploads a profile photo through the intake Worker (`cloudflare/log-intake/`,
 /// `POST /v1/avatar-slot`), which stores the bytes in R2 and returns the
@@ -15,6 +16,7 @@ class ProfileAvatarUploader {
   ProfileAvatarUploader(this._dio);
 
   static const int maxAvatarBytes = 512 * 1024;
+  static const int maxGifAvatarBytes = 1024 * 1024;
   static const int maxAvatarDimension = 768;
   static const int maxGifDimension = 512;
   static const int maxGifFrames = 60;
@@ -27,7 +29,7 @@ class ProfileAvatarUploader {
   final Dio _dio;
 
   static bool isAllowedGif(Uint8List bytes) {
-    if (bytes.isEmpty || bytes.lengthInBytes > maxAvatarBytes) return false;
+    if (bytes.isEmpty || bytes.lengthInBytes > maxGifAvatarBytes) return false;
     return _inspectGif(
           bytes,
           maxDimension: maxGifDimension,
@@ -37,15 +39,24 @@ class ProfileAvatarUploader {
         null;
   }
 
-  Future<String?> upload({
+  Future<String?> upload({required Uint8List bytes, required String token}) =>
+      _upload(bytes: bytes, token: token, prepare: _prepareAvatar);
+
+  Future<String?> uploadCover({
     required Uint8List bytes,
     required String token,
+  }) => _upload(bytes: bytes, token: token, prepare: _prepareCover);
+
+  Future<String?> _upload({
+    required Uint8List bytes,
+    required String token,
+    required _AvatarUpload? Function(Uint8List) prepare,
   }) async {
     try {
       final avatar = await compute<Uint8List, _AvatarUpload?>(
-        _prepareAvatar,
+        prepare,
         bytes,
-        debugLabel: 'compress profile avatar',
+        debugLabel: 'compress profile image',
       );
       if (avatar == null) return null;
       final res = await _dio.post<dynamic>(
@@ -68,6 +79,7 @@ class ProfileAvatarUploader {
   }
 
   Future<bool> delete({required String url, required String token}) async {
+    if (isKlipyAvatarReference(url) || isKlipyAvatarMediaUrl(url)) return true;
     try {
       await _dio.delete<void>(
         '$kLogIntakeUrl/v1/avatar-slot',
@@ -107,6 +119,35 @@ class ProfileAvatarUploader {
 }
 
 typedef _AvatarUpload = ({Uint8List bytes, String contentType});
+
+_AvatarUpload? _prepareCover(Uint8List bytes) {
+  if (bytes.isEmpty ||
+      bytes.lengthInBytes > 12 * 1024 * 1024 ||
+      img.findFormatForData(bytes) == img.ImageFormat.gif) {
+    return null;
+  }
+  final decoded = img.decodeImage(bytes);
+  if (decoded == null || decoded.width < 1 || decoded.height < 1) return null;
+  final source = img.bakeOrientation(decoded);
+  final scale = math.min(
+    1.0,
+    math.min(1600 / source.width, 900 / source.height),
+  );
+  for (final fraction in [1.0, 0.85, 0.7, 0.55, 0.4]) {
+    final width = (source.width * scale * fraction).round().clamp(1, 1600);
+    final height = (source.height * scale * fraction).round().clamp(1, 900);
+    final resized = width == source.width && height == source.height
+        ? source
+        : img.copyResize(source, width: width, height: height);
+    for (final quality in [88, 78, 68, 58]) {
+      final output = img.encodeJpg(resized, quality: quality);
+      if (output.lengthInBytes <= ProfileAvatarUploader.maxAvatarBytes) {
+        return (bytes: output, contentType: 'image/jpeg');
+      }
+    }
+  }
+  return null;
+}
 
 _AvatarUpload? _prepareAvatar(Uint8List bytes) {
   if (img.findFormatForData(bytes) == img.ImageFormat.gif) {
@@ -208,13 +249,13 @@ _AvatarUpload? _prepareGifAvatar(Uint8List bytes) {
   );
   if (sourceInfo == null) return null;
 
-  if (bytes.lengthInBytes <= ProfileAvatarUploader.maxAvatarBytes &&
+  if (bytes.lengthInBytes <= ProfileAvatarUploader.maxGifAvatarBytes &&
       sourceInfo.width <= ProfileAvatarUploader.maxGifDimension &&
       sourceInfo.height <= ProfileAvatarUploader.maxGifDimension &&
       sourceInfo.numFrames <= ProfileAvatarUploader.maxGifFrames) {
     final looping = _ensureGifLoops(bytes);
     if (looping != null &&
-        looping.lengthInBytes <= ProfileAvatarUploader.maxAvatarBytes) {
+        looping.lengthInBytes <= ProfileAvatarUploader.maxGifAvatarBytes) {
       return (bytes: looping, contentType: 'image/gif');
     }
   }
@@ -254,7 +295,7 @@ _AvatarUpload? _prepareGifAvatar(Uint8List bytes) {
     }
     final compressed = encoder.finish();
     if (compressed != null &&
-        compressed.lengthInBytes <= ProfileAvatarUploader.maxAvatarBytes &&
+        compressed.lengthInBytes <= ProfileAvatarUploader.maxGifAvatarBytes &&
         ProfileAvatarUploader.isAllowedGif(compressed)) {
       return (bytes: compressed, contentType: 'image/gif');
     }
@@ -264,7 +305,7 @@ _AvatarUpload? _prepareGifAvatar(Uint8List bytes) {
       final estimate =
           targetSide *
           math.sqrt(
-            ProfileAvatarUploader.maxAvatarBytes / compressed.lengthInBytes,
+            ProfileAvatarUploader.maxGifAvatarBytes / compressed.lengthInBytes,
           ) *
           0.85;
       targetSide = estimate.floor().clamp(64, targetSide - 1);
@@ -462,7 +503,7 @@ Uint8List? _ensureGifLoops(Uint8List bytes) {
 
   if (offset >= bytes.length || bytes[offset] != 0x2c) return null;
   if (bytes.length + _infiniteGifLoopExtension.length >
-      ProfileAvatarUploader.maxAvatarBytes) {
+      ProfileAvatarUploader.maxGifAvatarBytes) {
     return null;
   }
   final looping = Uint8List(bytes.length + _infiniteGifLoopExtension.length);

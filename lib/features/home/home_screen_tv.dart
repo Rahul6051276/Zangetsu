@@ -6,7 +6,6 @@ import 'cubit/home_rows_composer.dart';
 import 'dart:async';
 
 import 'package:cached_network_image/cached_network_image.dart';
-import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:hive_flutter/hive_flutter.dart';
@@ -30,7 +29,6 @@ import '../../core/playback/playback_prefs.dart';
 import '../../core/playback/resume_store.dart';
 import '../../core/playback/title_prefs.dart';
 import '../../core/playback/watch_history.dart';
-import '../../core/provider/provider_manager.dart';
 import '../../core/provider/provider_registry.dart';
 import '../../core/repository/catalogue_repository.dart';
 import '../../core/repository/source_repository.dart';
@@ -54,11 +52,14 @@ import '../detail/detail_screen.dart';
 import '../player/tv_playback_launch.dart';
 import '../search/browse_sources_screen.dart';
 import '../sources/providers_hub_screen.dart';
+import '../sources/source_picker_row_actions.dart';
 import 'home_screen.dart' show HomeLoadedEmptyView;
 import 'see_all_screen.dart';
 import 'cubit/home_cubit.dart';
 import 'see_all_screen_tv.dart';
 import 'streaming_services_row.dart';
+import 'home_catalogue_prefs.dart';
+import 'source_catalogue_home_content.dart';
 
 part 'home_screen_tv_rail.dart';
 part 'home_screen_tv_continue.dart';
@@ -81,6 +82,11 @@ class _HomeScreenTvState extends State<HomeScreenTv> {
   /// _metaCache; futures are stored so carousel rotation never re-fetches.
   final Map<String, Future<HeroMeta?>> _metaCache = {};
   bool _resuming = false;
+  late final ValueNotifier<bool> _sourceCatalogueSelection;
+  bool _sourceCatalogueSelected = false;
+  String? _sourceCatalogueSourceId;
+  List<HomeSection> _sourceCatalogueSections = const [];
+  final _sourceCatalogueController = SourceCatalogueHomeController();
 
   /// Stable identities so Anime ↔ Movie/TV swaps reuse the already-built
   /// 10-foot trees (hero + rails) instead of reconstructing them.
@@ -93,6 +99,10 @@ class _HomeScreenTvState extends State<HomeScreenTv> {
   @override
   void initState() {
     super.initState();
+    _sourceCatalogueSelected = HomeCataloguePrefs.sourceSelected;
+    _sourceCatalogueSourceId = HomeCataloguePrefs.sourceId;
+    _sourceCatalogueSelection = HomeCataloguePrefs.sourceSelection
+      ..addListener(_onSourceCatalogueSelectionChanged);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       if (isAppleTv) setState(() => _historyLive = true);
@@ -107,11 +117,197 @@ class _HomeScreenTvState extends State<HomeScreenTv> {
     });
   }
 
+  @override
+  void dispose() {
+    _sourceCatalogueSelection.removeListener(
+      _onSourceCatalogueSelectionChanged,
+    );
+    super.dispose();
+  }
+
+  void _onSourceCatalogueSelectionChanged() {
+    final selected = _sourceCatalogueSelection.value;
+    if (!mounted || selected == _sourceCatalogueSelected) return;
+    setState(() {
+      _sourceCatalogueSelected = selected;
+      _sourceCatalogueSections = const [];
+      if (selected) {
+        final activeId = context.read<ActiveSourceCubit>().state;
+        if (sl.isRegistered<SourceRepository>() &&
+            sl<SourceRepository>().loadedSources.any(
+              (source) => source.id == activeId,
+            )) {
+          _sourceCatalogueSourceId ??= activeId;
+        }
+      }
+    });
+  }
+
+  Future<void> _selectCatalogueTab({StreamKind? kind}) async {
+    if (kind != null) await ZModePrefs.setStreamKind(kind);
+    await HomeCataloguePrefs.setSourceSelected(kind == null);
+  }
+
+  void _selectHomeCatalogueSource(String sourceId) {
+    if (sourceId == _sourceCatalogueSourceId) return;
+    setState(() {
+      _sourceCatalogueSourceId = sourceId;
+      _sourceCatalogueSections = const [];
+    });
+    unawaited(HomeCataloguePrefs.setSourceId(sourceId));
+  }
+
+  void _setSourceCatalogueSections(List<HomeSection> sections) {
+    if (!mounted || !_sourceCatalogueSelected) return;
+    setState(() => _sourceCatalogueSections = sections);
+  }
+
+  List<MediaItem> get _sourceCatalogueHeroItems {
+    final sections = _sourceCatalogueSections;
+    if (sections.isEmpty) return const [];
+    for (final section in sections) {
+      if (section.title.startsWith('Trending')) return section.items;
+    }
+    return sections.first.items;
+  }
+
+  Widget _homeCatalogueToolbar() {
+    final sourceId = _sourceCatalogueSourceId;
+    final sourceIsAvailable =
+        sourceId != null &&
+        sl.isRegistered<SourceRepository>() &&
+        sl<SourceRepository>().loadedSources.any(
+          (source) => source.id == sourceId,
+        );
+    Widget tab(String label, String key, bool selected, VoidCallback onTap) =>
+        TvFocusable(
+          key: ValueKey(key),
+          onTap: onTap,
+          waitForKeyUp: true,
+          variant: TvFocusVariant.float,
+          scale: 1.04,
+          borderRadius: 24,
+          semanticLabel: label,
+          builder: (focused) => Container(
+            key: selected ? const ValueKey('tv-home-selected-chip') : null,
+            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
+            decoration: BoxDecoration(
+              color: selected || focused ? Colors.white : Colors.transparent,
+              borderRadius: BorderRadius.circular(24),
+            ),
+            child: Text(
+              label,
+              style: TextStyle(
+                color: selected || focused
+                    ? Colors.black
+                    : AppColors.textSecondary,
+                fontSize: 17,
+                fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+              ),
+            ),
+          ),
+        );
+    return ValueListenableBuilder<int>(
+      valueListenable: ZModePrefs.revision,
+      builder: (context, _, _) => Padding(
+        padding: const EdgeInsets.only(left: 12, right: 36),
+        child: SizedBox(
+          key: const ValueKey('tv-home-header'),
+          height: 56,
+          child: Stack(
+            alignment: Alignment.center,
+            children: [
+              Align(
+                alignment: Alignment.centerLeft,
+                child: Image.asset(
+                  'assets/icon/logo_mark.png',
+                  width: 42,
+                  height: 42,
+                ),
+              ),
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  tab(
+                    'Anime',
+                    'tv-home-tab-anime',
+                    !_sourceCatalogueSelected &&
+                        ZModePrefs.streamKind == StreamKind.anime,
+                    () =>
+                        unawaited(_selectCatalogueTab(kind: StreamKind.anime)),
+                  ),
+                  tab(
+                    'Movies & TV',
+                    'tv-home-tab-movie',
+                    !_sourceCatalogueSelected &&
+                        ZModePrefs.streamKind == StreamKind.movie,
+                    () =>
+                        unawaited(_selectCatalogueTab(kind: StreamKind.movie)),
+                  ),
+                  tab(
+                    'Source Catalogue',
+                    'tv-home-tab-source',
+                    _sourceCatalogueSelected,
+                    () => unawaited(_selectCatalogueTab()),
+                  ),
+                ],
+              ),
+              if (_sourceCatalogueSelected && sourceIsAvailable)
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Text(
+                        'Source · ',
+                        style: TextStyle(color: AppColors.textSecondary),
+                      ),
+                      SourceSwitcher(
+                        currentId: sourceId,
+                        onChanged: _selectHomeCatalogueSource,
+                        trailingBuilder: (id) => SourcePickerRowActions(
+                          sourceId: id,
+                          onCloudflareSolved: (solvedId) async {
+                            if (!mounted ||
+                                solvedId != _sourceCatalogueSourceId) {
+                              return;
+                            }
+                            await _sourceCatalogueController.refresh();
+                          },
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _homeHeaderSliver() => SliverToBoxAdapter(
+    child: SafeArea(
+      bottom: false,
+      child: Padding(
+        padding: const EdgeInsets.only(top: 12, bottom: 8),
+        child: _homeCatalogueToolbar(),
+      ),
+    ),
+  );
+
   // ── Navigation helpers ────────────────────────────────────────────────────
 
   /// Open the Detail screen — mirrors phone's _HomeViewState._openDetail.
   void _openDetail(MediaItem item) {
     Navigator.push(context, DetailScreen.route(item));
+  }
+
+  void _openSourceCatalogueDetail(MediaItem item) {
+    unawaited(() async {
+      final target = await sourceCatalogueTargetFor(item);
+      if (mounted) _openDetail(target);
+    }());
   }
 
   /// Begin playback from scratch — mirrors phone's _HomeViewState._playFeatured.
@@ -185,29 +381,22 @@ class _HomeScreenTvState extends State<HomeScreenTv> {
       '[tv-home] _resume · sourceId=${e.sourceId} '
       'showUrl=${e.showUrl} episodeId=${e.episodeId}',
     );
-    // On TV the QuickJS runtime is empty at boot (loadAll is skipped) and
-    // providers load on demand — ensure the JS provider is loaded before
-    // hitting _providerFor, which would otherwise throw "Provider not loaded".
+    // On TV the QuickJS runtime is empty at boot (loadAll is skipped), so use
+    // the source-aware loader: it loads JS providers and leaves native sources
+    // to their own managers.
     // Metadata pseudo-sources (zm) don't live in the runtime — they resolve
     // through CatalogueRouter → PlaybackResolver, so skip the check for them.
     if (e.sourceId != ZmodeIds.sourceId &&
-        sl<ProviderManager>().get(e.sourceId) == null) {
-      debugPrint('[tv-home] _resume · loading runtime for ${e.sourceId} ...');
-      final ok = await sl<ProviderRegistry>()
-          .ensureRuntimeLoaded(e.sourceId)
-          .catchError((_) => false);
-      if (!ok || sl<ProviderManager>().get(e.sourceId) == null) {
-        debugPrint('[tv-home] _resume · RUNTIME LOAD FAILED for ${e.sourceId}');
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Could not load ${e.sourceId} — skipping resume'),
-            ),
-          );
-        }
-        return;
+        !await sl<SourceRepository>().ensureSourceLoaded(e.sourceId)) {
+      debugPrint('[tv-home] _resume · source load FAILED for ${e.sourceId}');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Could not load ${e.sourceId} — skipping resume'),
+          ),
+        );
       }
-      debugPrint('[tv-home] _resume · runtime loaded for ${e.sourceId}');
+      return;
     }
     List<Episode> episodes;
     try {
@@ -317,14 +506,14 @@ class _HomeScreenTvState extends State<HomeScreenTv> {
   /// to the TV variant when [AppMode.isTv]; a paginable row (Aniyomi
   /// popular/latest, CloudStream mainPage) carries a `more` descriptor that
   /// drives infinite scroll, everything else stays a fixed list.
-  void _openSeeAll(HomeSection section) {
+  void _openSeeAll(HomeSection section, {bool sourceCatalogue = false}) {
     Navigator.push(
       context,
       MaterialPageRoute(
         builder: (_) => SeeAllScreen(
           title: section.title,
           items: section.items,
-          onTap: _openDetail,
+          onTap: sourceCatalogue ? _openSourceCatalogueDetail : _openDetail,
           onLongPress: _showInfo,
           // Pagination isn't part of CatalogueRepository — go to whichever
           // repository owns the row: metadata providers stamp the Z Mode
@@ -441,6 +630,7 @@ class _HomeScreenTvState extends State<HomeScreenTv> {
   }) {
     return TvFocusable(
       autofocus: autofocus,
+      focusScrollAlignment: autofocus ? 1.0 : 0.5,
       variant: TvFocusVariant.float,
       scale: 1.06,
       onTap: onTap,
@@ -506,7 +696,7 @@ class _HomeScreenTvState extends State<HomeScreenTv> {
       'loadedEmpty=$loadedEmpty noSourceForMode=$noSourceForMode',
     );
 
-    if (noSourceForMode || loadedEmpty) {
+    if (!_sourceCatalogueSelected && (noSourceForMode || loadedEmpty)) {
       debugPrint(
         '[tv-home] build → HomeLoadedEmptyView '
         '(noSourceForMode=$noSourceForMode loadedEmpty=$loadedEmpty '
@@ -539,11 +729,14 @@ class _HomeScreenTvState extends State<HomeScreenTv> {
     }
 
     Widget historyBody(List<HistoryEntry> history) {
+      if (_sourceCatalogueSelected) {
+        return _sourceCatalogueScroll(history, mode ?? ContentMode.anime);
+      }
       // Rebuild when rows arrive — NOT when Anime ↔ Movie/TV flips. The dual
       // host listens to [ZModePrefs.revision] itself and only toggles Offstage.
       return ValueListenableBuilder<int>(
         valueListenable: context.read<HomeCubit>().streamCatalogRevision,
-        builder: (context, _, __) {
+        builder: (context, _, _) {
           final cubit = context.read<HomeCubit>();
           final animeRows = cubit.sectionsFor(StreamKind.anime);
           final movieRows = cubit.sectionsFor(StreamKind.movie);
@@ -561,7 +754,7 @@ class _HomeScreenTvState extends State<HomeScreenTv> {
           }
           return ValueListenableBuilder<int>(
             valueListenable: ZModePrefs.revision,
-            builder: (context, _, __) {
+            builder: (context, _, _) {
               final kind = ZModePrefs.streamKind;
               final rows = cubit.sectionsFor(kind) ?? sections;
               // Filter Continue Watching to match the active stream kind.
@@ -675,6 +868,7 @@ class _HomeScreenTvState extends State<HomeScreenTv> {
     final heroItem = heroItems.isNotEmpty ? heroItems.first : null;
     return CustomScrollView(
       slivers: [
+        _homeHeaderSliver(),
         if (heroItem != null)
           SliverToBoxAdapter(
             child: _TvHero(
@@ -732,6 +926,73 @@ class _HomeScreenTvState extends State<HomeScreenTv> {
                   !loading,
             ),
           ),
+        const SliverToBoxAdapter(child: SizedBox(height: 48)),
+      ],
+    );
+  }
+
+  Widget _sourceCatalogueScroll(List<HistoryEntry> history, ContentMode mode) {
+    final heroItems = _sourceCatalogueHeroItems.take(6).toList();
+    Widget sourceCatalogueContent(ContentMode contentMode) =>
+        SourceCatalogueHomeContent(
+          controller: _sourceCatalogueController,
+          initialSourceId: _sourceCatalogueSourceId,
+          mode: contentMode,
+          onSourceSelected: (sourceId) {
+            _sourceCatalogueSourceId = sourceId;
+            unawaited(HomeCataloguePrefs.setSourceId(sourceId));
+          },
+          onSectionsChanged: _setSourceCatalogueSections,
+          showSourcePicker: false,
+          sectionBuilder: (section) => TvRail(
+            section: section,
+            onTap: _openSourceCatalogueDetail,
+            onLongPress: _showInfo,
+            onSeeAll: () => _openSeeAll(section, sourceCatalogue: true),
+          ),
+        );
+
+    final content = sl.isRegistered<ContentModeCubit>()
+        ? BlocBuilder<ContentModeCubit, ContentMode>(
+            bloc: sl<ContentModeCubit>(),
+            builder: (context, currentMode) =>
+                sourceCatalogueContent(currentMode),
+          )
+        : sourceCatalogueContent(mode);
+
+    return CustomScrollView(
+      slivers: [
+        _homeHeaderSliver(),
+        if (heroItems.isNotEmpty)
+          SliverToBoxAdapter(
+            child: _TvHero(
+              items: heroItems,
+              active: true,
+              inListOf: _inList,
+              metaOf: _heroMeta,
+              onPlay: _play,
+              onInfo: _openSourceCatalogueDetail,
+              onToggleList: (item) => showListStatusSheet(
+                context,
+                item: item,
+                onChanged: () {
+                  if (mounted) setState(() {});
+                },
+              ),
+              wrapButton: _tvWrapButton,
+              onBrowseSources: _openBrowseSources,
+            ),
+          ),
+        if (history.isNotEmpty)
+          SliverToBoxAdapter(
+            child: _TvContinueRail(
+              history: history,
+              onResume: _resume,
+              onLongPress: _showContinueInfo,
+              firstAutofocus: heroItems.isEmpty,
+            ),
+          ),
+        SliverToBoxAdapter(child: content),
         const SliverToBoxAdapter(child: SizedBox(height: 48)),
       ],
     );

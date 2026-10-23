@@ -644,6 +644,12 @@ class AppLocalizationsIt extends AppLocalizations {
   String get profile => 'Profilo';
 
   @override
+  String get changeProfile => 'Cambiare profilo?';
+
+  @override
+  String get chooseWhoIsWatching => 'Scegli chi sta guardando.';
+
+  @override
   String get home => 'Inizio';
 
   @override

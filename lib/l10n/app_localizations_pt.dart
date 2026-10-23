@@ -650,6 +650,12 @@ class AppLocalizationsPt extends AppLocalizations {
   String get profile => 'Perfil';
 
   @override
+  String get changeProfile => 'Alterar perfil?';
+
+  @override
+  String get chooseWhoIsWatching => 'Escolha quem está assistindo.';
+
+  @override
   String get home => 'Início';
 
   @override

@@ -56,6 +56,7 @@ import '../reader/novel_reader_screen.dart';
 import '../settings/streaming_services_screen.dart';
 import '../sources/aniyomi_repo_tab.dart' show kAniyomiReposBoxName;
 import '../sources/providers_hub_screen.dart';
+import '../sources/source_picker_row_actions.dart';
 import '../sources/zangetsu_sources_screen.dart';
 import '../update/update_dialog.dart';
 import 'continue_section.dart';
@@ -432,9 +433,12 @@ class _HomeViewState extends State<_HomeView>
   }
 
   void _openDetail(MediaItem item) {
+    // Only rebuild Home if this visit actually changed My List — Continue
+    // Watching/Reading rows already listen to their Hive boxes, so a blanket
+    // setState made every back-press rebuild the whole page for nothing.
+    final listRev = _myList.revision.value;
     Navigator.push(context, DetailScreen.route(item)).then((_) {
-      // Refresh Continue Watching + My List row when returning from detail.
-      if (mounted) setState(() {});
+      if (mounted && _myList.revision.value != listRev) setState(() {});
     });
   }
 
@@ -747,6 +751,13 @@ class _HomeViewState extends State<_HomeView>
       return SourceSwitcher(
         currentId: sourceId,
         onChanged: _selectHomeCatalogueSource,
+        trailingBuilder: (id) => SourcePickerRowActions(
+          sourceId: id,
+          onCloudflareSolved: (solvedId) async {
+            if (!mounted || solvedId != _sourceCatalogueSourceId) return;
+            await _sourceCatalogueController.refresh();
+          },
+        ),
       );
     }
 
@@ -2169,6 +2180,16 @@ class HomeSourceSwitcherSlot extends StatelessWidget {
                 currentId: id,
                 onChanged: (newId) =>
                     context.read<ActiveSourceCubit>().setSource(newId),
+                trailingBuilder: (sourceId) => SourcePickerRowActions(
+                  sourceId: sourceId,
+                  onCloudflareSolved: (solvedId) async {
+                    if (!context.mounted ||
+                        context.read<ActiveSourceCubit>().state != solvedId) {
+                      return;
+                    }
+                    await context.read<HomeCubit>().load(reset: true);
+                  },
+                ),
                 onInstallSources: () => Navigator.of(context).push(
                   MaterialPageRoute<void>(
                     builder: (_) =>
