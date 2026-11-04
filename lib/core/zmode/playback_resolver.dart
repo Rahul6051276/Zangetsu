@@ -1083,15 +1083,7 @@ class PlaybackResolver {
       return null;
     }
 
-    final providerTag = _sources.displayName(sourceId);
-    final taggedStreams = streams.map((s) {
-      final q = (s.quality != null && s.quality!.isNotEmpty) ? ' · ${s.quality}' : '';
-      return s.copyWith(
-        quality: '[$providerTag]$q',
-      );
-    }).toList();
-
-    return _Attempt(match: match, episodeUrl: srcEp.url, streams: taggedStreams);
+    return _Attempt(match: match, episodeUrl: srcEp.url, streams: streams);
   }
 
   List<String> _orderedCandidates(ZCanonical c) {
