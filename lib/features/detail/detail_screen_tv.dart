@@ -279,7 +279,7 @@ class _DetailScreenTvState extends State<DetailScreenTv> {
     resolveSources(String u) => sl<CatalogueRepository>().sources(
       u,
       sourceId: widget.item.sourceId,
-      fast: true,
+      fast: false,
     );
     await launchTvPlayback(
       context: context,
