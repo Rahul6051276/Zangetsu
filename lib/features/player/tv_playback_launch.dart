@@ -163,7 +163,21 @@ Future<void> launchTvPlayback({
   Future<List<VideoSource>> trackedResolve(String url) async {
     debugPrint('[tv-playback] resolveSources starting for $url');
     try {
-      final rawStreams = await resolveSources(url);
+      List<VideoSource> rawStreams = const [];
+      if (sl.isRegistered<PlaybackResolver>()) {
+        try {
+          rawStreams = await sl<PlaybackResolver>().sources(
+            url,
+            fast: false,
+            category: category,
+          );
+        } catch (_) {
+          rawStreams = await resolveSources(url);
+        }
+      } else {
+        rawStreams = await resolveSources(url);
+      }
+
       if (rawStreams.isEmpty) {
         resolveFailure ??= const TvPlaybackLoadFailure(
           TvPlaybackLoadFailureKind.episodeNotAvailable,
