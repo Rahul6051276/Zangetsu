@@ -110,9 +110,8 @@ class _HomeScreenTvState extends State<HomeScreenTv> {
       if (cubit.state.sections == null && !cubit.state.loading) {
         cubit.load();
       }
-      if (ZModePrefs.enabled && sl.isRegistered<MetadataRepository>()) {
-        cubit.primeStreamKindCacheFromMetadata();
-        cubit.applyMetadataCacheIfEmpty();
+            if (ZModePrefs.streamKind != StreamKind.movie) {
+        ZModePrefs.setStreamKind(StreamKind.movie);
       }
     });
   }
@@ -228,14 +227,6 @@ class _HomeScreenTvState extends State<HomeScreenTv> {
               Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  tab(
-                    'Anime',
-                    'tv-home-tab-anime',
-                    !_sourceCatalogueSelected &&
-                        ZModePrefs.streamKind == StreamKind.anime,
-                    () =>
-                        unawaited(_selectCatalogueTab(kind: StreamKind.anime)),
-                  ),
                   tab(
                     'Movies & TV',
                     'tv-home-tab-movie',
