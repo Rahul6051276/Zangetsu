@@ -311,64 +311,59 @@ Future<void> launchTvPlayback({
       TvNativePlayer.lastFailure = null;
       TvNativePlayer.lastPlaybackErrorCode = null;
 
-      final started = await TvNativePlayer.play(
-        sourceId: sourceId,
-        episodes: episodes,
-        startIndex: startIndex,
-        resume: resume,
-        resolveSources: trackedResolve,
-        showUrl: showUrl,
-        showTitle: showTitle,
-        cover: cover,
-        coverHeaders: coverHeaders,
-        category: category,
-        availableCategories: availableCategories,
-        malId: malId,
-        scrobbleTitle: scrobbleTitle,
-        tmdbId: tmdbId,
-        tmdbIsTv: tmdbIsTv,
-        imdbId: imdbId,
-      );
+      bool playbackSuccess = false;
 
-      final errorCode = TvNativePlayer.lastPlaybackErrorCode;
+      // Usi provider ke sabhi file links (1GB, 2GB, 4GB, 10GB etc.) ko ek-ek karke try karein
+      for (int i = 0; i < resolvedStreams.length; i++) {
+        final currentStream = resolvedStreams[i];
+        final streamLabel = currentStream.quality ?? currentStream.label ?? 'Mirror ${i + 1}';
+        debugPrint('[tv-playback] Trying stream ${i + 1}/${resolvedStreams.length}: $streamLabel');
 
-      if (!started || errorCode != null) {
-        debugPrint(
-          '[tv-playback] Stream failed on ExoPlayer (code=$errorCode). Auto-hop...',
+        final started = await TvNativePlayer.play(
+          sourceId: sourceId,
+          episodes: episodes,
+          startIndex: startIndex,
+          resume: resume,
+          // Current candidate ko first place par rakhein, baaki mirrors piche taaki player menu me sab available rahein
+          resolveSources: (u) async => [
+            currentStream,
+            ...resolvedStreams.where((s) => s.url != currentStream.url),
+          ],
+          showUrl: showUrl,
+          showTitle: showTitle,
+          cover: cover,
+          coverHeaders: coverHeaders,
+          category: category,
+          availableCategories: availableCategories,
+          malId: malId,
+          scrobbleTitle: scrobbleTitle,
+          tmdbId: tmdbId,
+          tmdbIsTv: tmdbIsTv,
+          imdbId: imdbId,
         );
-        dismissLoading?.call();
 
-        final isZm = (showUrl != null && ZmodeIds.isZ(showUrl));
-        if (isZm && sourceHop < kMaxTvSourceHops && context.mounted) {
-          await launchTvPlayback(
-            context: context,
-            sourceId: sourceId,
-            episodes: episodes,
-            startIndex: startIndex,
-            resume: resume,
-            resolveSources: resolveSources,
-            showUrl: showUrl,
-            showTitle: showTitle,
-            cover: cover,
-            coverHeaders: coverHeaders,
-            category: category,
-            availableCategories: availableCategories,
-            malId: malId,
-            scrobbleTitle: scrobbleTitle,
-            tmdbId: tmdbId,
-            tmdbIsTv: tmdbIsTv,
-            imdbId: imdbId,
-            listItem: listItem,
-            sourceHop: sourceHop + 1,
-            skipOverlay: true,
-          );
-          return;
+        final errorCode = TvNativePlayer.lastPlaybackErrorCode;
+
+        // Agar stream cleanly start ho gayi aur error code nahi aaya
+        if (started && errorCode == null) {
+          debugPrint('[tv-playback] Stream playback successful with: $streamLabel');
+          playbackSuccess = true;
+          break;
         }
+
+        debugPrint('[tv-playback] Stream failed ($streamLabel, code=$errorCode). Trying next mirror...');
+      }
+
+      // Agar provider ke saare size/quality mirrors fail ho jayein tabhi failure dialog dikhayein
+      if (!playbackSuccess) {
+        dismissLoading?.call();
+        final finalErr = TvNativePlayer.lastPlaybackErrorCode ?? 'ALL_STREAMS_FAILED';
+        debugPrint('[tv-playback] All ${resolvedStreams.length} mirrors failed.');
 
         if (context.mounted) {
           await _handleTvPlaybackFailure(
             context,
-            errorCode: errorCode ?? 'STREAM_UNPLAYABLE',
+            errorCode: finalErr,
             showTitle: showTitle ?? showUrl ?? sourceId,
             showUrl: showUrl,
             launchAgain: () => launchTvPlayback(
@@ -394,7 +389,6 @@ Future<void> launchTvPlayback({
             ),
           );
         }
-        return;
       }
       return;
     }
